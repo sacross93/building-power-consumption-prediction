@@ -23,8 +23,10 @@ from sklearn.model_selection import TimeSeriesSplit
 import optuna
 warnings.filterwarnings("ignore")
 
-# GPU 설정 (모든 GPU 사용 가능)
+# GPU 강제 사용 설정
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["LIGHTGBM_GPU"] = "1"  # LightGBM GPU 강제
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # CUDA 동기화
 
 # Optuna 로깅 억제
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -49,7 +51,9 @@ def check_gpu_support():
         lgb_test = lgb.LGBMRegressor(
             device="gpu", 
             max_bin=255,
-            n_estimators=10, 
+            n_estimators=50,  # 더 많이 테스트
+            num_threads=1,
+            force_col_wise=True,
             verbose=-1
         )
         lgb_test.fit(X_test, y_test)
@@ -66,7 +70,8 @@ def check_gpu_support():
         xgb_test = xgb.XGBRegressor(
             tree_method="gpu_hist", 
             max_bin=256,
-            n_estimators=10, 
+            n_estimators=50,  # 더 많이 테스트
+            predictor="gpu_predictor",
             verbosity=0
         )
         xgb_test.fit(X_test, y_test)
@@ -157,17 +162,20 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
         "reg_lambda": trial.suggest_float("rl", 1e-8, 10.0, log=True),
         "n_estimators": 1000,  # 안정적인 수량
         "verbose": -1,
-        "num_threads": -1,  # 모든 스레드 사용
+        "num_threads": 1,  # GPU 사용 시 스레드 제한
+        "force_col_wise": True,  # GPU 최적화
     }
     
     if not use_gpu:
         raise RuntimeError("🚫 GPU mode required! Use --gpu flag or remove --gpu to allow CPU")
     
-    # GPU 전용 설정 (아무 GPU나 사용)
+    # GPU 전용 설정 - 강제 GPU 사용
     params["device"] = "gpu" 
     params["gpu_use_dp"] = True
-    params["max_bin"] = 255  # GPU에서 안전한 bin 크기
-    print(f"🔥 LightGBM using GPU (auto-select device)")
+    params["max_bin"] = 255
+    params["num_threads"] = 1  # GPU 사용 시 스레드 제한
+    params["force_col_wise"] = True  # GPU 최적화
+    print(f"🔥 LightGBM forcing GPU usage with device=gpu")
     
     model = lgb.LGBMRegressor(**params)
     
@@ -200,17 +208,18 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
         "reg_lambda": trial.suggest_float("rl", 1e-8, 10.0, log=True),
         "n_estimators": 1000,  # 안정적인 수량
         "verbosity": 0,  # 완전 무음
-        "n_jobs": -1,  # 모든 스레드 사용
+        "n_jobs": 1,  # GPU 사용 시 스레드 제한
     }
     
     if not use_gpu:
         raise RuntimeError("🚫 GPU mode required! Use --gpu flag or remove --gpu to allow CPU")
     
-    # GPU 전용 설정 (아무 GPU나 사용)
+    # GPU 전용 설정 - 강제 GPU 사용
     params["tree_method"] = "gpu_hist"
-    params["max_bin"] = 256  # GPU에서 안전한 bin 크기
-    params["grow_policy"] = "lossguide"  # GPU 최적화 정책
-    print(f"🔥 XGBoost using GPU (auto-select device)")
+    params["max_bin"] = 256
+    params["grow_policy"] = "lossguide"
+    params["predictor"] = "gpu_predictor"  # GPU 예측기 강제
+    print(f"🔥 XGBoost forcing GPU usage with tree_method=gpu_hist")
     
     model = xgb.XGBRegressor(**params)
     model.fit(X_tr, y_tr)  # Optuna objective에서는 early stopping 제거
