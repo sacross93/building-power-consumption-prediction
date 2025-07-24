@@ -18,7 +18,6 @@ import pandas as pd
 import holidays
 import lightgbm as lgb
 import xgboost as xgb
-from catboost import CatBoostRegressor
 from sklearn.preprocessing import StandardScaler, RobustScaler, LabelEncoder
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_absolute_error
@@ -44,12 +43,10 @@ def smape_np(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     denominator = np.abs(y_true) + np.abs(y_pred) + eps
     return np.mean(numerator / denominator) * 100
 
-def lgb_smape(y_pred: np.ndarray, data: lgb.Dataset):
-    y_true = data.get_label()
+def lgb_smape(y_true: np.ndarray, y_pred: np.ndarray):
     return "SMAPE", smape_np(y_true, y_pred), False
 
-def xgb_smape(y_pred: np.ndarray, dtrain: xgb.DMatrix):
-    y_true = dtrain.get_label()
+def xgb_smape(y_true: np.ndarray, y_pred: np.ndarray):
     return "SMAPE", smape_np(y_true, y_pred)
 
 ###########################################################
@@ -255,7 +252,6 @@ def train_lightgbm(X_train, y_train, X_val, y_val, cat_cols):
     return model
 
 def train_xgboost(X_train, y_train, X_val, y_val):
-    """XGBoost 모델 학습"""
     params = {
         'objective': 'reg:absoluteerror',
         'random_state': SEED,
@@ -269,43 +265,17 @@ def train_xgboost(X_train, y_train, X_val, y_val):
         'n_estimators': 10000,
         'verbosity': 0
     }
-    
     model = xgb.XGBRegressor(**params)
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        eval_metric=xgb_smape,
-        early_stopping_rounds=200,
-        verbose=False
-    )
-    
+    if X_val is not None and y_val is not None:
+        model.fit(
+            X_train, y_train,
+            eval_set=[(X_val, y_val)]
+        )
+    else:
+        model.fit(X_train, y_train)
     return model
 
-def train_catboost(X_train, y_train, X_val, y_val, cat_cols):
-    """CatBoost 모델 학습"""
-    params = {
-        'loss_function': 'MAE',
-        'random_seed': SEED,
-        'learning_rate': 0.005,
-        'depth': 8,
-        'subsample': 0.8,
-        'colsample_bylevel': 0.8,
-        'min_data_in_leaf': 50,
-        'reg_lambda': 0.01,
-        'iterations': 10000,
-        'verbose': False
-    }
-    
-    model = CatBoostRegressor(**params)
-    model.fit(
-        X_train, y_train,
-        eval_set=(X_val, y_val),
-        cat_features=cat_cols,
-        early_stopping_rounds=200,
-        verbose=False
-    )
-    
-    return model
+
 
 def train_per_building(df_train, df_test, features, cat_cols):
     """건물별 개별 모델 학습"""
@@ -335,11 +305,9 @@ def train_per_building(df_train, df_test, features, cat_cols):
         
         oof_pred_lgb = np.zeros(len(building_train))
         oof_pred_xgb = np.zeros(len(building_train))
-        oof_pred_cat = np.zeros(len(building_train))
         
         best_iters_lgb = []
         best_iters_xgb = []
-        best_iters_cat = []
         
         for fold, (tr_idx, val_idx) in enumerate(tscv.split(X_scaled)):
             # LightGBM
@@ -359,17 +327,10 @@ def train_per_building(df_train, df_test, features, cat_cols):
             oof_pred_xgb[val_idx] = model_xgb.predict(X_scaled.iloc[val_idx])
             best_iters_xgb.append(model_xgb.best_iteration_)
             
-            # CatBoost
-            model_cat = train_catboost(
-                X_scaled.iloc[tr_idx], y[tr_idx],
-                X_scaled.iloc[val_idx], y[val_idx],
-                cat_cols
-            )
-            oof_pred_cat[val_idx] = model_cat.predict(X_scaled.iloc[val_idx])
-            best_iters_cat.append(model_cat.best_iteration_)
+
         
         # 앙상블 예측
-        oof_pred_ensemble = 0.4 * oof_pred_lgb + 0.35 * oof_pred_xgb + 0.25 * oof_pred_cat
+        oof_pred_ensemble = 0.6 * oof_pred_lgb + 0.4 * oof_pred_xgb
         oof_pred_ensemble[oof_pred_ensemble < 0] = 0
         
         sm = smape_np(y, oof_pred_ensemble)
@@ -384,7 +345,6 @@ def train_per_building(df_train, df_test, features, cat_cols):
         # 최종 모델들
         final_model_lgb = train_lightgbm(X_final_scaled, y, X_final_scaled, y, cat_cols)
         final_model_xgb = train_xgboost(X_final_scaled, y, X_final_scaled, y)
-        final_model_cat = train_catboost(X_final_scaled, y, X_final_scaled, y, cat_cols)
         
         # 테스트 데이터 예측
         if not building_test.empty:
@@ -394,9 +354,8 @@ def train_per_building(df_train, df_test, features, cat_cols):
             
             pred_lgb = final_model_lgb.predict(X_test_scaled)
             pred_xgb = final_model_xgb.predict(X_test_scaled)
-            pred_cat = final_model_cat.predict(X_test_scaled)
             
-            pred_ensemble = 0.4 * pred_lgb + 0.35 * pred_xgb + 0.25 * pred_cat
+            pred_ensemble = 0.6 * pred_lgb + 0.4 * pred_xgb
             pred_ensemble[pred_ensemble < 0] = 0
             
             preds_list.append(pd.DataFrame({
