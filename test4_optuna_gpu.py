@@ -357,12 +357,12 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         })
         
         model_xgb = xgb.XGBRegressor(**best_xgb_params)
-        # GPU 전용 early stopping
+        # GPU 전용 early stopping (콜백 방식)
         xgb_patience = 300
         model_xgb.fit(
             X_tr, y_tr_f,
             eval_set=[(X_val, y_val_f)],
-            early_stopping_rounds=xgb_patience,
+            callbacks=[xgb.callback.EarlyStopping(rounds=xgb_patience, save_best=True)],
             verbose=0  # 완전 무음
         )
         oof_pred_xgb[val_idx] = model_xgb.predict(X_val)
