@@ -34,25 +34,34 @@ SEED = 42
 
 def check_gpu_support():
     """GPU 지원 가능 여부 확인 및 성능 정보"""
+    lgb_gpu = False
+    xgb_gpu = False
+    
+    # LightGBM GPU 실제 학습 테스트
     try:
-        # LightGBM GPU 확인
-        lgb_test = lgb.LGBMRegressor(device="gpu", n_estimators=1)
+        import numpy as np
+        X_test = np.random.rand(100, 5)
+        y_test = np.random.rand(100)
+        lgb_test = lgb.LGBMRegressor(device="gpu", n_estimators=10, verbose=-1)
+        lgb_test.fit(X_test, y_test)
         lgb_gpu = True
-        print("✅ LightGBM GPU support detected")
-    except Exception:
-        lgb_gpu = False
-        print("❌ LightGBM GPU not available, using CPU")
+        print("✅ LightGBM GPU support confirmed (training test passed)")
+    except Exception as e:
+        print(f"❌ LightGBM GPU failed: {str(e)[:50]}... - using CPU")
     
+    # XGBoost GPU 실제 학습 테스트  
     try:
-        # XGBoost GPU 확인
-        xgb_test = xgb.XGBRegressor(tree_method="gpu_hist", n_estimators=1)
+        import numpy as np
+        X_test = np.random.rand(100, 5)
+        y_test = np.random.rand(100)
+        xgb_test = xgb.XGBRegressor(tree_method="gpu_hist", n_estimators=10, verbosity=0)
+        xgb_test.fit(X_test, y_test)
         xgb_gpu = True
-        print("✅ XGBoost GPU support detected")
-    except Exception:
-        xgb_gpu = False
-        print("❌ XGBoost GPU not available, using CPU")
+        print("✅ XGBoost GPU support confirmed (training test passed)")
+    except Exception as e:
+        print(f"❌ XGBoost GPU failed: {str(e)[:50]}... - using CPU")
     
-    # GPU 메모리 정보 (nvidia-ml-py가 있다면)
+    # GPU 메모리 정보
     try:
         import pynvml
         pynvml.nvmlInit()
@@ -65,6 +74,9 @@ def check_gpu_support():
             print("💪 High GPU memory available - enabling intensive mode")
     except:
         print("📊 GPU memory info not available")
+    
+    if not lgb_gpu and not xgb_gpu:
+        print("🔄 Falling back to CPU-optimized high-performance mode")
     
     return lgb_gpu, xgb_gpu
 
@@ -124,17 +136,21 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
         "min_data_in_leaf": trial.suggest_int("min_leaf", 5, 100),
         "reg_alpha": trial.suggest_float("ra", 1e-8, 10.0, log=True),
         "reg_lambda": trial.suggest_float("rl", 1e-8, 10.0, log=True),
-        "n_estimators": 5000,  # GPU로 더 많은 estimators
+        "n_estimators": 5000,  # 더 많은 estimators
         "verbose": -1,
         "num_threads": -1,  # 모든 스레드 사용
     }
     
     if use_gpu:
-        params["device"] = "gpu"
+        params["device"] = "gpu" 
         params["gpu_use_dp"] = True
         params["gpu_platform_id"] = 0
         params["gpu_device_id"] = 0
         params["max_bin"] = 511  # GPU에서 더 많은 bin 사용
+    else:
+        # CPU 최적화 설정
+        params["max_bin"] = 255  # CPU에서 안정적인 bin 수
+        params["feature_pre_filter"] = False
     
     model = lgb.LGBMRegressor(**params)
     
@@ -165,7 +181,7 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
         "min_child_weight": trial.suggest_int("min_child_weight", 1, 20),
         "reg_alpha": trial.suggest_float("ra", 1e-8, 10.0, log=True),
         "reg_lambda": trial.suggest_float("rl", 1e-8, 10.0, log=True),
-        "n_estimators": 5000,  # GPU로 더 많은 estimators
+        "n_estimators": 5000,  # 더 많은 estimators
         "verbosity": 0,  # 완전 무음
         "n_jobs": -1,  # 모든 스레드 사용
     }
@@ -175,14 +191,13 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
         params["gpu_id"] = 0
         params["max_bin"] = 512  # GPU에서 더 많은 bin
         params["grow_policy"] = "lossguide"  # GPU 최적화 정책
+    else:
+        # CPU 최적화 설정
+        params["tree_method"] = "hist"  # CPU에서 빠른 히스토그램 방식
+        params["max_bin"] = 256  # CPU에서 안정적인 bin 수
     
     model = xgb.XGBRegressor(**params)
-    model.fit(
-        X_tr, y_tr, 
-        eval_set=[(X_val, y_val)],
-        early_stopping_rounds=100,
-        verbose=0  # 완전 무음으로 설정
-    )
+    model.fit(X_tr, y_tr)  # Optuna objective에서는 early stopping 제거
     preds = model.predict(X_val)
     return smape_np(np.expm1(y_val), np.expm1(preds))
 
@@ -238,7 +253,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "min_data_in_leaf": best_lgb_params.pop("min_leaf"),
             "reg_alpha": best_lgb_params.pop("ra"),
             "reg_lambda": best_lgb_params.pop("rl"),
-            "n_estimators": 8000,  # GPU로 더 많은 estimators
+            "n_estimators": 8000,  # 더 많은 estimators
             "verbose": -1,
             "num_threads": -1,
         })
@@ -287,7 +302,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "min_child_weight": best_xgb_params.pop("min_child_weight"),
             "reg_alpha": best_xgb_params.pop("ra"),
             "reg_lambda": best_xgb_params.pop("rl"),
-            "n_estimators": 8000,  # GPU로 더 많은 estimators
+            "n_estimators": 8000,  # 더 많은 estimators
             "verbosity": 0,
             "n_jobs": -1,
         })
