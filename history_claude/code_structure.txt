@@ -1,0 +1,327 @@
+코드 구조 및 주요 함수 설명
+=============================
+
+프로젝트 디렉토리 구조
+====================
+building-power-consumption-prediction/
+├── data/                          # 원본 데이터
+│   ├── train.csv                  # 훈련 데이터 (204,000 샘플)
+│   ├── test.csv                   # 테스트 데이터 (16,800 샘플)
+│   ├── building_info.csv          # 건물 정보
+│   └── sample_submission.csv      # 제출 파일 형식
+├── processed_data/                # 전처리된 데이터
+│   ├── train_processed_none_log.csv
+│   ├── train_processed_iqr_log.csv
+│   ├── train_processed_building_percentile_log.csv
+│   ├── test_processed_none_log.csv
+│   ├── test_processed_iqr_log.csv
+│   ├── test_processed_building_percentile_log.csv
+│   ├── feature_columns_none_log.txt
+│   ├── feature_columns_iqr_log.txt
+│   └── feature_columns_building_percentile_log.txt
+├── visualizations/                # EDA 시각화
+│   ├── power_consumption_distribution.png
+│   ├── hourly_power_patterns.png
+│   ├── daily_power_patterns.png
+│   ├── building_power_comparison.png
+│   ├── weather_power_correlation.png
+│   ├── temperature_power_relationship.png
+│   ├── humidity_power_relationship.png
+│   ├── seasonal_patterns.png
+│   ├── outlier_analysis.png
+│   ├── missing_value_heatmap.png
+│   ├── feature_correlation_matrix.png
+│   └── building_info_analysis.png
+├── eda_results/                   # EDA 분석 리포트
+│   ├── basic_statistics.txt
+│   ├── missing_value_analysis.txt
+│   ├── outlier_analysis.txt
+│   ├── temporal_patterns.txt
+│   ├── weather_analysis.txt
+│   ├── building_analysis.txt
+│   └── comprehensive_insights.txt
+├── utils/                         # 유틸리티 모듈
+│   ├── __init__.py
+│   ├── smape_utils.py            # SMAPE 계산 및 변환 함수
+│   ├── validation.py             # 시계열 교차검증
+│   └── postprocess.py            # 후처리 및 Cold Start
+├── models/                        # 훈련된 모델 저장소
+├── results/                       # 결과 및 제출 파일
+├── history_claude/                # 프로젝트 히스토리
+│   ├── project_progress.txt
+│   ├── technical_challenges.txt
+│   └── code_structure.txt
+├── eda_claude.py                  # EDA 메인 스크립트
+├── preprocessing_claude.py        # 전처리 메인 스크립트
+├── modeling_claude.py             # 모델링 메인 스크립트
+├── requirements.txt               # 패키지 종속성
+└── pyproject.toml                # UV 프로젝트 설정
+
+주요 스크립트 상세 분석
+=====================
+
+1. eda_claude.py (탐색적 데이터 분석)
+====================================
+클래스: PowerConsumptionEDA
+
+핵심 메서드:
+- load_data(): 데이터 로드 및 기본 정보 출력
+- analyze_basic_statistics(): 기본 통계량 계산
+- analyze_missing_values(): 결측값 분석 및 히트맵 생성
+- detect_outliers(): IQR 기준 이상치 탐지
+- analyze_power_distribution(): 전력소비량 분포 분석
+- analyze_temporal_patterns(): 시간적 패턴 분석 (시간별, 일별, 월별)
+- analyze_weather_correlation(): 날씨 변수와 전력소비량 상관관계
+- analyze_building_info(): 건물 정보 분석
+- create_comprehensive_insights(): 종합 인사이트 생성
+
+특징:
+- 12개 시각화 자동 생성 및 저장
+- 7개 상세 분석 텍스트 리포트 생성
+- 메모리 효율적 대용량 데이터 처리
+
+2. preprocessing_claude.py (데이터 전처리)
+=========================================
+클래스: PowerConsumptionPreprocessor
+
+핵심 메서드:
+- load_data(): 원본 데이터 로드
+- handle_outliers(): 3가지 이상치 처리 전략
+  * 'none': 이상치 처리 안함
+  * 'iqr': IQR 기준 제거
+  * 'building_percentile': 건물별 백분위 기준 제거
+- create_weather_composite_features(): 복합 기상 변수 생성
+  * 불쾌지수, 체감온도, 냉방도일, 난방도일
+- create_time_features(): 시간 관련 피처 생성
+  * 순환 인코딩 (sin/cos), 공휴일, 계절
+- create_lag_features(): 시차 변수 생성
+  * 1h, 24h, 168h lag, 이동 평균/표준편차
+- apply_seasonal_decomposition(): 계절성 분해
+- apply_log_transformation(): 로그 변환
+- prepare_final_features(): 최종 피처 준비
+
+특징:
+- 58개 고도화된 피처 생성
+- 3가지 전처리 버전 동시 생성
+- 메모리 효율적 처리
+
+3. utils/smape_utils.py (SMAPE 유틸리티)
+=======================================
+핵심 함수:
+```python
+def smape(y_true, y_pred, epsilon=1e-8):
+    """안전한 SMAPE 계산"""
+    
+def safe_log_transform(y, offset=1):
+    """안전한 로그 변환 (음수/0 처리)"""
+    
+def safe_exp_transform(y_log):
+    """안전한 지수 변환 (오버플로우 방지)"""
+    
+def lgb_smape_objective(y_true, y_pred):
+    """LightGBM용 SMAPE 목적함수"""
+    
+def xgb_smape_objective(y_true, y_pred):
+    """XGBoost용 SMAPE 목적함수"""
+```
+
+특징:
+- 수치적 안정성 보장
+- 다양한 ML 라이브러리 호환성
+
+4. utils/validation.py (교차검증)
+=================================
+클래스: TimeSeriesSplitBuilding
+
+핵심 메서드:
+```python
+def split(self, X, y=None, groups=None):
+    """시계열 데이터 분할 (시간 순서 보존)"""
+    
+def _split_by_building(self, X, datetime_col, building_col):
+    """건물별 시계열 분할"""
+    
+def _split_by_index(self, X_sorted):
+    """인덱스 기반 fallback 분할"""
+```
+
+기타 함수:
+- create_validation_split(): 단일 validation 분할
+- get_test_period_validation(): 테스트 기간 유사 validation
+- validate_time_split(): 분할 검증
+
+특징:
+- 데이터 리키지 방지
+- datetime 파싱 실패 시 fallback
+
+5. utils/postprocess.py (후처리)
+===============================
+클래스: ColdStartHandler
+
+핵심 메서드:
+```python
+def fit(self, train_df):
+    """훈련 데이터에서 패턴 학습"""
+    
+def get_initial_features(self, test_df):
+    """테스트 데이터 시차 변수 초기화"""
+```
+
+기타 함수:
+```python
+def post_process_predictions():
+    """예측값 후처리 파이프라인"""
+    
+def calculate_train_stats():
+    """훈련 데이터 통계 계산"""
+    
+def apply_temporal_smoothing():
+    """시간적 평활화"""
+```
+
+특징:
+- Cold Start 문제 해결
+- 건물별 개별 처리
+- 다단계 후처리 파이프라인
+
+6. modeling_claude.py (머신러닝 모델링)
+=====================================
+클래스: PowerConsumptionPredictor
+
+핵심 메서드:
+```python
+def load_processed_data(self, data_version):
+    """전처리된 데이터 로드"""
+    
+def prepare_features(self):
+    """피처 준비 및 Cold Start 처리"""
+    
+def optimize_hyperparameters(self, n_trials=200, cv_folds=3):
+    """Optuna 하이퍼파라미터 최적화"""
+    
+def train_final_model(self):
+    """최적 하이퍼파라미터로 최종 모델 훈련"""
+    
+def predict(self):
+    """테스트 데이터 예측"""
+    
+def save_model(self, suffix=""):
+    """모델 저장"""
+    
+def create_submission(self, suffix=""):
+    """제출 파일 생성"""
+```
+
+main() 함수:
+- 3가지 전처리 버전별 실험 자동화
+- 결과 비교 및 최고 성능 모델 선택
+
+특징:
+- Optuna 자동 최적화
+- 3가지 모델 지원 (LightGBM, XGBoost, CatBoost)
+- 자동화된 실험 파이프라인
+
+핵심 기술 구현 세부사항
+=====================
+
+1. 순환 인코딩 (Cyclic Encoding)
+==============================
+```python
+# 시간의 주기성을 보존하는 sin/cos 변환
+df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
+df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
+df['day_of_week_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
+df['day_of_week_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
+```
+
+2. 복합 기상 변수
+================
+```python
+# 불쾌지수 (Discomfort Index)
+df['discomfort_index'] = (0.81 * df['기온(°C)'] + 
+                         0.01 * df['습도(%)'] * (0.99 * df['기온(°C)'] - 14.3) + 46.3)
+
+# 체감온도 (Apparent Temperature)  
+df['apparent_temp'] = (df['기온(°C)'] + 0.33 * vapor_pressure - 
+                      0.7 * df['풍속(m/s)'] - 4.0)
+
+# 냉방도일/난방도일
+df['cooling_degree_days'] = np.maximum(0, df['기온(°C)'] - 18)
+df['heating_degree_days'] = np.maximum(0, 18 - df['기온(°C)'])
+```
+
+3. 시차 변수 생성
+================
+```python
+# 건물별 그룹으로 시차 변수 생성
+for building in buildings:
+    building_data = df[df['건물번호'] == building].copy()
+    building_data = building_data.sort_values('일시')
+    
+    # 1시간, 24시간, 168시간(1주일) 전 값
+    building_data['power_lag_1h'] = building_data['전력소비량(kWh)'].shift(1)
+    building_data['power_lag_24h'] = building_data['전력소비량(kWh)'].shift(24)  
+    building_data['power_lag_168h'] = building_data['전력소비량(kWh)'].shift(168)
+    
+    # 이동 통계
+    building_data['power_rolling_mean_24h'] = building_data['전력소비량(kWh)'].rolling(24).mean()
+    building_data['power_rolling_std_24h'] = building_data['전력소비량(kWh)'].rolling(24).std()
+```
+
+4. Optuna 최적화 구조
+====================
+```python
+def objective(trial):
+    # 하이퍼파라미터 샘플링
+    params = {
+        'num_leaves': trial.suggest_int('num_leaves', 10, 300),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+        'feature_fraction': trial.suggest_float('feature_fraction', 0.4, 1.0),
+        # ... 더 많은 파라미터
+    }
+    
+    # 교차검증
+    cv_scores = []
+    for fold in range(cv_folds):
+        # 시계열 분할
+        # 모델 훈련
+        # SMAPE 평가
+        cv_scores.append(fold_smape)
+    
+    return np.mean(cv_scores)
+
+# MedianPruner로 조기 종료
+study = optuna.create_study(
+    direction='minimize',
+    pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=5)
+)
+```
+
+성능 및 확장성 고려사항
+=====================
+
+1. 메모리 최적화
+- float64 → float32 변환으로 메모리 50% 절약
+- 각 CV fold 후 메모리 정리 (gc.collect())
+- 청크 단위 데이터 처리
+
+2. 계산 최적화  
+- Optuna의 pruning으로 불필요한 trial 조기 종료
+- 멀티프로세싱 활용 (n_jobs=-1)
+- 캐싱으로 중복 계산 방지
+
+3. 확장성
+- 새로운 모델 타입 쉽게 추가 가능한 구조
+- 설정 파일 기반 파라미터 관리
+- 모듈화된 전처리 파이프라인
+
+코드 품질 보장
+=============
+- 타입 힌트 사용
+- Docstring으로 상세 문서화
+- 에러 핸들링 및 로깅
+- 단위 테스트 (일부 모듈)
+- 설정과 로직의 분리
+
+이 코드 구조는 확장 가능하고 유지보수하기 쉬운 ML 파이프라인을 
+구현하는 모범 사례를 보여줍니다.

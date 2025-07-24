@@ -1,0 +1,223 @@
+기술적 도전과 해결책 상세 기록
+===============================
+
+1. Datetime 파싱 에러 문제
+========================
+문제 상황:
+- TimeSeriesSplitBuilding에서 "Unknown datetime string format, unable to parse: 1_20240601 00" 에러 발생
+- 전처리된 데이터의 datetime 컬럼 형식이 예상과 다름
+
+원인 분석:
+- 전처리 과정에서 '일시' 컬럼이 "건물번호_YYYYMMDD HH" 형태로 변경됨
+- pd.to_datetime()이 이 형식을 인식하지 못함
+
+해결책:
+```python
+# Before (실패)
+datetime_series = pd.to_datetime(X_sorted[datetime_col])
+
+# After (성공)
+try:
+    if X_sorted[datetime_col].dtype == 'object':
+        datetime_series = pd.to_datetime(X_sorted[datetime_col])
+    else:
+        datetime_series = X_sorted[datetime_col]
+except Exception as e:
+    print(f"날짜 변환 에러: {e}")
+    # fallback: 인덱스 기반 분할
+    return self._split_by_index(X_sorted)
+```
+
+최종 해결:
+- 인덱스 기반 단순 시계열 분할로 변경
+- 시간 순서는 유지하면서 datetime 파싱 의존성 제거
+
+2. LightGBM Early Stopping 에러
+==============================
+문제 상황:
+- "For early stopping, at least one dataset and eval metric is required for evaluation" 에러
+- lgb.early_stopping() 콜백 사용 시 발생
+
+원인 분석:
+- LightGBM 버전별 early_stopping 파라미터 차이
+- validation dataset이 제대로 설정되지 않음
+- custom metric 설정과 충돌
+
+해결책 1차 시도:
+```python
+# 실패한 시도
+lgb.early_stopping(100, verbose=False)
+```
+
+해결책 2차 시도:
+```python
+# 성공한 해결책 - early stopping 제거
+model = lgb.train(
+    params,
+    train_set,
+    num_boost_round=500,  # 고정 라운드
+    callbacks=[lgb.log_evaluation(0)]
+)
+```
+
+최종 해결:
+- CV에서는 early stopping 없이 고정 500 라운드
+- 최종 모델에서는 1000 라운드로 안정적 훈련
+
+3. 무한대 SMAPE 문제
+===================
+문제 상황:
+- CV SMAPE가 inf로 출력됨
+- 예측값 또는 실제값이 0 근처에서 발생하는 수치적 불안정성
+
+원인 분석:
+- SMAPE 공식의 분모가 0에 가까워질 때 발생
+- log 변환 후 exp 역변환 과정에서 극값 생성
+
+해결책:
+```python
+def smape(y_true, y_pred, epsilon=1e-8):
+    """안전한 SMAPE 계산"""
+    denominator = (np.abs(y_true) + np.abs(y_pred)) / 2.0
+    denominator = np.maximum(denominator, epsilon)  # 0 방지
+    smape_val = np.mean(np.abs(y_true - y_pred) / denominator) * 100
+    return smape_val
+
+def safe_exp_transform(y_log):
+    """안전한 exp 변환"""
+    # 너무 큰 값 클리핑
+    y_log_clipped = np.clip(y_log, -10, 10)
+    return np.expm1(y_log_clipped)
+```
+
+결과:
+- SMAPE가 정상적으로 계산됨 (11.85 달성)
+- 수치적 안정성 확보
+
+4. Unicode 인코딩 에러
+====================
+문제 상황:
+- ✅, ❌ 같은 유니코드 문자 사용 시 인코딩 에러
+- Windows 환경에서 콘솔 출력 문제
+
+해결책:
+```python
+# Before
+print("✅ 성공")
+print("❌ 실패")
+
+# After  
+print("[SUCCESS] 성공")
+print("[ERROR] 실패")
+```
+
+5. Cold Start 문제
+==================
+문제 정의:
+- 테스트 데이터에는 시차 변수(lag features)가 없음
+- 과거 전력소비량 데이터가 필요한 피처들
+
+해결 전략:
+```python
+class ColdStartHandler:
+    def fit(self, train_df):
+        # 각 건물의 마지막 168시간 저장
+        for building_id in train_df['건물번호'].unique():
+            building_data = train_df[train_df['건물번호'] == building_id]
+            last_168_values = building_data['전력소비량(kWh)'].tail(168).values
+            self.last_values[building_id] = last_168_values
+            
+        # 시간대별 평균 패턴 저장
+        hourly_pattern = building_data.groupby('hour')['전력소비량(kWh)'].mean()
+        self.hourly_patterns[building_id] = hourly_pattern.to_dict()
+    
+    def get_initial_features(self, test_df):
+        # 테스트 데이터에 시차 변수 초기화
+        for building_id in test_df['건물번호'].unique():
+            # 마지막 값들을 이용해 lag_1h, lag_24h, lag_168h 설정
+            # 패턴 기반으로 누락값 보완
+```
+
+6. 메모리 최적화
+===============
+문제:
+- 대용량 데이터 처리 시 메모리 부족
+- CV 과정에서 메모리 누수
+
+해결책:
+```python
+# 각 fold 후 메모리 정리
+del X_fold_train, y_fold_train, X_fold_val, y_fold_val, model
+gc.collect()
+
+# 데이터 타입 최적화
+def optimize_dtypes(df):
+    for col in df.columns:
+        if df[col].dtype == 'float64':
+            df[col] = df[col].astype('float32')
+        elif df[col].dtype == 'int64':
+            df[col] = df[col].astype('int32')
+```
+
+7. 하이퍼파라미터 최적화 안정성
+=============================
+문제:
+- Optuna 최적화 중 일부 trial에서 에러 발생
+- 안정적이지 않은 CV 스코어
+
+해결책:
+```python
+def objective(trial):
+    try:
+        # 모델 훈련 및 평가
+        # ...
+        return mean_cv_score
+    except Exception as e:
+        print(f"Trial 에러: {e}")
+        return float('inf')  # 실패한 trial 처리
+
+# Pruning으로 조기 종료
+study = optuna.create_study(
+    direction='minimize',
+    pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=5)
+)
+```
+
+8. 시계열 데이터 분할 전략
+=========================
+문제:
+- 일반적인 랜덤 분할은 데이터 리키지 발생
+- 건물별로 다른 패턴을 가짐
+
+해결책:
+```python
+class TimeSeriesSplitBuilding:
+    def _split_by_building(self, X, datetime_col, building_col):
+        # 시간 순서 보존
+        X_sorted = X.sort_values([building_col, datetime_col])
+        
+        # 전체 날짜 범위에서 분할
+        for i in range(self.n_splits):
+            test_end_idx = total_days - i * (self.test_size_days + self.gap_days)
+            test_start_idx = test_end_idx - self.test_size_days
+            train_end_idx = test_start_idx - self.gap_days
+            
+            # Gap을 두어 데이터 리키지 방지
+```
+
+학습된 교훈
+===========
+1. 시계열 데이터는 항상 시간 순서를 고려해야 함
+2. 외부 라이브러리 버전 호환성 중요
+3. 수치적 안정성을 위한 방어적 프로그래밍 필수
+4. 메모리 관리는 대용량 데이터에서 핵심
+5. 에러 핸들링과 fallback 메커니즘의 중요성
+6. 도메인 지식(전력소비 패턴)을 모델에 반영하는 것이 중요
+
+향후 개선 방향
+=============
+1. 더 정교한 시계열 분할 전략
+2. 앙상블 모델 적용
+3. 외부 데이터(날씨 예보 등) 활용
+4. 딥러닝 모델(LSTM, Transformer) 실험
+5. 실시간 예측을 위한 모델 경량화
