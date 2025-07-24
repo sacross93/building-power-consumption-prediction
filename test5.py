@@ -22,8 +22,8 @@ import optuna
 import gc
 warnings.filterwarnings("ignore")
 
-# GPU 강제 사용 설정 (GPU #3) + 메모리 최적화
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"  # GPU 3번만 사용
+# GPU 강제 사용 설정 (GPU #2) + 메모리 최적화
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"  # GPU 2번만 사용
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["LIGHTGBM_GPU"] = "1"  # LightGBM GPU 강제
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # CUDA 동기화
@@ -49,7 +49,7 @@ def check_gpu_support():
     try:
         import pynvml
         pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # GPU 3번
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # GPU 2번
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
         total_gb = info.total // 1024**3  # GB
         free_gb = info.free // 1024**3
@@ -82,9 +82,9 @@ def check_gpu_support():
         )
         lgb_test.fit(X_test, y_test)
         lgb_gpu = True
-        print("✅ LightGBM GPU #3 high-performance test passed")
+        print("✅ LightGBM GPU #2 high-performance test passed")
     except Exception as e:
-        print(f"❌ LightGBM GPU #3 failed: {str(e)[:50]}...")
+        print(f"❌ LightGBM GPU #2 failed: {str(e)[:50]}...")
     
     # XGBoost GPU 실제 학습 테스트 (더 큰 데이터셋으로)
     try:
@@ -100,9 +100,9 @@ def check_gpu_support():
         )
         xgb_test.fit(X_test, y_test)
         xgb_gpu = True
-        print("✅ XGBoost GPU #3 high-performance test passed")
+        print("✅ XGBoost GPU #2 high-performance test passed")
     except Exception as e:
-        print(f"❌ XGBoost GPU #3 failed: {str(e)[:50]}...")
+        print(f"❌ XGBoost GPU #2 failed: {str(e)[:50]}...")
     
     if not lgb_gpu or not xgb_gpu:
         print("❌ GPU requirements not met")
