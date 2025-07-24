@@ -276,6 +276,10 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         )
         print(f"      🔍 LGB best SMAPE: {study_lgb.best_value:.3f}%")
         best_lgb_params = study_lgb.best_params
+        # GPU 전용 - 무조건 GPU #3 사용
+        if not lgb_gpu:
+            raise RuntimeError("🚫 LightGBM GPU not available! Cannot proceed.")
+            
         best_lgb_params.update({
             "objective": "regression_l1",
             "random_state": SEED,
@@ -288,16 +292,14 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "reg_lambda": best_lgb_params.pop("rl"),
             "n_estimators": 8000,  # 더 많은 estimators
             "verbose": -1,
-            "num_threads": -1,
+            "num_threads": 1,  # GPU 사용 시 스레드 제한
+            "device": "gpu",
+            "gpu_use_dp": True,
+            "gpu_platform_id": 0,
+            "gpu_device_id": 0,  # CUDA_VISIBLE_DEVICES=3이므로 0번이 GPU 3번
+            "max_bin": 255,
+            "force_col_wise": True  # GPU 최적화
         })
-        
-        # GPU 전용 - 무조건 GPU #3 사용
-        if not lgb_gpu:
-            raise RuntimeError("🚫 LightGBM GPU not available! Cannot proceed.")
-        best_lgb_params["device"] = "gpu"
-        best_lgb_params["gpu_use_dp"] = True
-        best_lgb_params["gpu_platform_id"] = 0
-        best_lgb_params["gpu_device_id"] = 0  # CUDA_VISIBLE_DEVICES=3이므로 0번이 GPU 3번
         
         model_lgb = lgb.LGBMRegressor(**best_lgb_params)
         # GPU 전용 early stopping  
@@ -330,6 +332,10 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         )
         print(f"      🔍 XGB best SMAPE: {study_xgb.best_value:.3f}%")
         best_xgb_params = study_xgb.best_params
+        # GPU 전용 - 무조건 GPU #3 사용
+        if not xgb_gpu:
+            raise RuntimeError("🚫 XGBoost GPU not available! Cannot proceed.")
+            
         best_xgb_params.update({
             "objective": "reg:squarederror",
             "random_state": SEED,
@@ -342,14 +348,13 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "reg_lambda": best_xgb_params.pop("rl"),
             "n_estimators": 8000,  # 더 많은 estimators
             "verbosity": 0,
-            "n_jobs": -1,
+            "n_jobs": 1,  # GPU 사용 시 스레드 제한
+            "tree_method": "gpu_hist",
+            "gpu_id": 0,  # CUDA_VISIBLE_DEVICES=3이므로 0번이 GPU 3번
+            "predictor": "gpu_predictor",  # GPU 예측기 강제
+            "max_bin": 256,
+            "grow_policy": "lossguide"
         })
-        
-        # GPU 전용 - 무조건 GPU #3 사용
-        if not xgb_gpu:
-            raise RuntimeError("🚫 XGBoost GPU not available! Cannot proceed.")
-        best_xgb_params["tree_method"] = "gpu_hist"
-        best_xgb_params["gpu_id"] = 0  # CUDA_VISIBLE_DEVICES=3이므로 0번이 GPU 3번
         
         model_xgb = xgb.XGBRegressor(**best_xgb_params)
         # GPU 전용 early stopping
@@ -393,11 +398,13 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
     best_xgb_params_final = best_xgb_params.copy()
     best_xgb_params_final['n_estimators'] = avg_xgb_iter
     
-    print(f"    Using LGB iters: {avg_lgb_iter}, XGB iters: {avg_xgb_iter}")
+    print(f"    🔥 Final GPU training - LGB iters: {avg_lgb_iter}, XGB iters: {avg_xgb_iter}")
     
+    print(f"    🔥 Training final LightGBM on GPU #3...")
     final_lgb = lgb.LGBMRegressor(**best_lgb_params_final)
     final_lgb.fit(X_scaled, y_tr_log, categorical_feature="auto")
     
+    print(f"    🔥 Training final XGBoost on GPU #3...")
     final_xgb = xgb.XGBRegressor(**best_xgb_params_final)
     final_xgb.fit(X_scaled, y_tr_log)
 
