@@ -142,14 +142,14 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
     params = {
         "objective": "regression_l1",
         "random_state": SEED,
-        "learning_rate": trial.suggest_float("lr", 0.003, 0.1, log=True),
-        "num_leaves": trial.suggest_int("num_leaves", 16, 512),  # GPU에서 더 큰 트리 가능
+        "learning_rate": trial.suggest_float("lr", 0.01, 0.1, log=True),
+        "num_leaves": trial.suggest_int("num_leaves", 31, 256),  # 안정적인 범위
         "subsample": trial.suggest_float("subsample", 0.6, 1.0),
         "colsample_bytree": trial.suggest_float("colsample", 0.6, 1.0),
         "min_data_in_leaf": trial.suggest_int("min_leaf", 5, 100),
         "reg_alpha": trial.suggest_float("ra", 1e-8, 10.0, log=True),
         "reg_lambda": trial.suggest_float("rl", 1e-8, 10.0, log=True),
-        "n_estimators": 5000,  # 더 많은 estimators
+        "n_estimators": 1000,  # 안정적인 수량
         "verbose": -1,
         "num_threads": -1,  # 모든 스레드 사용
     }
@@ -177,7 +177,7 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
         X_tr, y_tr,
         eval_set=[(X_val, y_val)],
         eval_metric=lambda y,p: ("SMAPE", smape_np(np.expm1(y), np.expm1(p)), False),
-        categorical_feature=cat_cols,
+        categorical_feature="auto",  # GPU에서 카테고리 자동 감지
         callbacks=callbacks,
     )
     preds = model.predict(X_val)
@@ -187,14 +187,14 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
     params = {
         "objective": "reg:squarederror",
         "random_state": SEED,
-        "learning_rate": trial.suggest_float("lr", 0.003, 0.1, log=True),
-        "max_depth": trial.suggest_int("max_depth", 3, 15),  # GPU에서 더 깊은 트리
+        "learning_rate": trial.suggest_float("lr", 0.01, 0.1, log=True),
+        "max_depth": trial.suggest_int("max_depth", 3, 10),  # 안정적인 범위
         "subsample": trial.suggest_float("subsample", 0.6, 1.0),
         "colsample_bytree": trial.suggest_float("colsample", 0.6, 1.0),
         "min_child_weight": trial.suggest_int("min_child_weight", 1, 20),
         "reg_alpha": trial.suggest_float("ra", 1e-8, 10.0, log=True),
         "reg_lambda": trial.suggest_float("rl", 1e-8, 10.0, log=True),
-        "n_estimators": 5000,  # 더 많은 estimators
+        "n_estimators": 1000,  # 안정적인 수량
         "verbosity": 0,  # 완전 무음
         "n_jobs": -1,  # 모든 스레드 사용
     }
@@ -249,7 +249,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             sampler=optuna.samplers.TPESampler(n_startup_trials=20)  # 더 빠른 수렴
         )
         study_lgb.optimize(
-            lambda tr: lgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, ["건물번호"], use_gpu and lgb_gpu), 
+            lambda tr: lgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, "auto", use_gpu and lgb_gpu), 
             n_trials=n_trials,  # 더 많은 trials (XGB와 동시 실행)
             show_progress_bar=False,
             n_jobs=1  # GPU는 단일 작업이 더 효율적
@@ -286,7 +286,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         model_lgb.fit(
             X_tr, y_tr_f, 
             eval_set=[(X_val, y_val_f)],
-            categorical_feature=["건물번호"],
+            categorical_feature="auto",  # GPU에서 카테고리 자동 감지  
             callbacks=callbacks_lgb
         )
         oof_pred_lgb[val_idx] = model_lgb.predict(X_val)
@@ -369,7 +369,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
     print(f"    Using LGB iters: {avg_lgb_iter}, XGB iters: {avg_xgb_iter}")
     
     final_lgb = lgb.LGBMRegressor(**best_lgb_params_final)
-    final_lgb.fit(X_scaled, y_tr_log, categorical_feature=["건물번호"])
+    final_lgb.fit(X_scaled, y_tr_log, categorical_feature="auto")
     
     final_xgb = xgb.XGBRegressor(**best_xgb_params_final)
     final_xgb.fit(X_scaled, y_tr_log)
