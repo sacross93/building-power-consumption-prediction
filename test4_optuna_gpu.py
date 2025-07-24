@@ -357,16 +357,11 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         })
         
         model_xgb = xgb.XGBRegressor(**best_xgb_params)
-        # GPU 전용 early stopping (콜백 방식)
-        xgb_patience = 300
-        model_xgb.fit(
-            X_tr, y_tr_f,
-            eval_set=[(X_val, y_val_f)],
-            callbacks=[xgb.callback.EarlyStopping(rounds=xgb_patience, save_best=True)],
-            verbose=0  # 완전 무음
-        )
+        # GPU 전용 학습 (early stopping 없이 안정적으로)
+        model_xgb.fit(X_tr, y_tr_f)
         oof_pred_xgb[val_idx] = model_xgb.predict(X_val)
-        best_iters_xgb.append(model_xgb.best_iteration)
+        # XGBoost에서 best_iteration 대신 n_estimators 사용
+        best_iters_xgb.append(best_xgb_params.get('n_estimators', 1000))
 
     # 앙상블 (LightGBM 60% + XGBoost 40%)
     oof_pred_ensemble = 0.6 * oof_pred_lgb + 0.4 * oof_pred_xgb
