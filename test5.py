@@ -163,15 +163,15 @@ def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
 def lgb_objective_gpu_intensive(trial, X_tr, y_tr, X_val, y_val, gpu_memory_gb):
     """GPU 메모리를 최대한 활용하는 LightGBM 최적화"""
     
-    # GPU 메모리에 따른 동적 파라미터 조정
+    # GPU 메모리에 따른 동적 파라미터 조정 (GPU 호환성 고려)
     if gpu_memory_gb >= 24:  # 24GB 이상
-        max_bin = trial.suggest_int("max_bin", 1023, 4095)  # 더 큰 bin 사이즈
-        num_leaves = trial.suggest_int("num_leaves", 512, 4096)  # 더 많은 leaves
-        max_depth = trial.suggest_int("max_depth", 10, 20)  # 더 깊은 트리
+        max_bin = trial.suggest_int("max_bin", 255, 1023)  # GPU 안정적 범위
+        num_leaves = trial.suggest_int("num_leaves", 256, 2048)  # 적정 범위
+        max_depth = trial.suggest_int("max_depth", 8, 15)  # 안정적 깊이
     else:  # 16GB 이하
-        max_bin = trial.suggest_int("max_bin", 511, 1023)
-        num_leaves = trial.suggest_int("num_leaves", 256, 1024)
-        max_depth = trial.suggest_int("max_depth", 8, 15)
+        max_bin = trial.suggest_int("max_bin", 127, 511)
+        num_leaves = trial.suggest_int("num_leaves", 128, 1024)
+        max_depth = trial.suggest_int("max_depth", 6, 12)
     
     params = {
         "objective": "regression_l1",
@@ -220,13 +220,13 @@ def lgb_objective_gpu_intensive(trial, X_tr, y_tr, X_val, y_val, gpu_memory_gb):
 def xgb_objective_gpu_intensive(trial, X_tr, y_tr, X_val, y_val, gpu_memory_gb):
     """GPU 메모리를 최대한 활용하는 XGBoost 최적화"""
     
-    # GPU 메모리에 따른 동적 파라미터 조정
+    # GPU 메모리에 따른 동적 파라미터 조정 (GPU 호환성 고려)
     if gpu_memory_gb >= 24:  # 24GB 이상
-        max_bin = trial.suggest_int("max_bin", 1024, 8192)  # 더 큰 bin 사이즈
-        max_depth = trial.suggest_int("max_depth", 8, 16)  # 더 깊은 트리
+        max_bin = trial.suggest_int("max_bin", 256, 1024)  # GPU 안정적 범위
+        max_depth = trial.suggest_int("max_depth", 6, 12)  # 안정적 깊이
     else:  # 16GB 이하
-        max_bin = trial.suggest_int("max_bin", 512, 2048)
-        max_depth = trial.suggest_int("max_depth", 6, 12)
+        max_bin = trial.suggest_int("max_bin", 128, 512)
+        max_depth = trial.suggest_int("max_depth", 4, 10)
     
     params = {
         "objective": "reg:squarederror",
@@ -303,13 +303,25 @@ def train_building_gpu_intensive(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats
             direction="minimize",
             sampler=optuna.samplers.TPESampler(n_startup_trials=30)  # 더 많은 startup trials
         )
-        study_lgb.optimize(
-            lambda tr: lgb_objective_gpu_intensive(tr, X_tr, y_tr_f, X_val, y_val_f, gpu_memory_gb), 
-            n_trials=n_trials * 2,  # 더 많은 trials
-            show_progress_bar=False,
-            n_jobs=1
-        )
-        print(f"      🎯 LGB GPU-intensive best: {study_lgb.best_value:.3f}%")
+        try:
+            study_lgb.optimize(
+                lambda tr: lgb_objective_gpu_intensive(tr, X_tr, y_tr_f, X_val, y_val_f, gpu_memory_gb), 
+                n_trials=n_trials * 2,  # 더 많은 trials
+                show_progress_bar=False,
+                n_jobs=1
+            )
+        except Exception as e:
+            print(f"      ⚠️ LightGBM optimization failed: {str(e)[:100]}...")
+            # 안전한 기본값으로 대체
+            study_lgb = optuna.create_study(direction="minimize")
+            study_lgb.enqueue_trial({
+                "max_bin": 255, "num_leaves": 256, "max_depth": 8,
+                "lr": 0.05, "subsample": 0.8, "colsample": 0.8,
+                "min_leaf": 20, "ra": 0.01, "rl": 0.01, 
+                "bagging": 0.8, "feature": 0.8
+            })
+        best_lgb_value = study_lgb.best_value if study_lgb.best_value is not None else 15.0
+        print(f"      🎯 LGB GPU-intensive best: {best_lgb_value:.3f}%")
         
         # Best LGB model with GPU-intensive settings
         best_lgb_params = study_lgb.best_params.copy()
@@ -348,13 +360,25 @@ def train_building_gpu_intensive(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats
             direction="minimize",
             sampler=optuna.samplers.TPESampler(n_startup_trials=30)
         )
-        study_xgb.optimize(
-            lambda tr: xgb_objective_gpu_intensive(tr, X_tr, y_tr_f, X_val, y_val_f, gpu_memory_gb),
-            n_trials=n_trials * 2,  # 더 많은 trials
-            show_progress_bar=False,
-            n_jobs=1
-        )
-        print(f"      🎯 XGB GPU-intensive best: {study_xgb.best_value:.3f}%")
+        try:
+            study_xgb.optimize(
+                lambda tr: xgb_objective_gpu_intensive(tr, X_tr, y_tr_f, X_val, y_val_f, gpu_memory_gb),
+                n_trials=n_trials * 2,  # 더 많은 trials
+                show_progress_bar=False,
+                n_jobs=1
+            )
+        except Exception as e:
+            print(f"      ⚠️ XGBoost optimization failed: {str(e)[:100]}...")
+            # 안전한 기본값으로 대체
+            study_xgb = optuna.create_study(direction="minimize")
+            study_xgb.enqueue_trial({
+                "max_bin": 256, "max_depth": 6, "lr": 0.05,
+                "subsample": 0.8, "colsample": 0.8,
+                "colsample_level": 0.8, "colsample_node": 0.8,
+                "min_child_weight": 10, "ra": 0.01, "rl": 0.01, "gamma": 0.01
+            })
+        best_xgb_value = study_xgb.best_value if study_xgb.best_value is not None else 15.0
+        print(f"      🎯 XGB GPU-intensive best: {best_xgb_value:.3f}%")
         
         # Best XGB model with GPU-intensive settings
         best_xgb_params = study_xgb.best_params.copy()
