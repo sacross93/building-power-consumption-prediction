@@ -23,7 +23,8 @@ from sklearn.model_selection import TimeSeriesSplit
 import optuna
 warnings.filterwarnings("ignore")
 
-# GPU 강제 사용 설정
+# GPU 강제 사용 설정 (GPU #3)
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"  # GPU 3번만 사용
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["LIGHTGBM_GPU"] = "1"  # LightGBM GPU 강제
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # CUDA 동기화
@@ -50,6 +51,8 @@ def check_gpu_support():
         y_test = np.random.rand(100)
         lgb_test = lgb.LGBMRegressor(
             device="gpu", 
+            gpu_platform_id=0,
+            gpu_device_id=0,  # CUDA_VISIBLE_DEVICES=3이므로 0번이 GPU 3번
             max_bin=255,
             n_estimators=50,  # 더 많이 테스트
             num_threads=1,
@@ -58,9 +61,9 @@ def check_gpu_support():
         )
         lgb_test.fit(X_test, y_test)
         lgb_gpu = True
-        print("✅ LightGBM GPU support confirmed (training test passed)")
+        print("✅ LightGBM GPU #3 support confirmed (training test passed)")
     except Exception as e:
-        print(f"❌ LightGBM GPU failed: {str(e)[:50]}... - using CPU")
+        print(f"❌ LightGBM GPU #3 failed: {str(e)[:50]}... - using CPU")
     
     # XGBoost GPU 실제 학습 테스트 (GPU 3번)
     try:
@@ -69,6 +72,7 @@ def check_gpu_support():
         y_test = np.random.rand(100)
         xgb_test = xgb.XGBRegressor(
             tree_method="gpu_hist", 
+            gpu_id=0,  # CUDA_VISIBLE_DEVICES=3이므로 0번이 GPU 3번
             max_bin=256,
             n_estimators=50,  # 더 많이 테스트
             predictor="gpu_predictor",
@@ -76,23 +80,23 @@ def check_gpu_support():
         )
         xgb_test.fit(X_test, y_test)
         xgb_gpu = True
-        print("✅ XGBoost GPU support confirmed (training test passed)")
+        print("✅ XGBoost GPU #3 support confirmed (training test passed)")
     except Exception as e:
-        print(f"❌ XGBoost GPU failed: {str(e)[:50]}... - using CPU")
+        print(f"❌ XGBoost GPU #3 failed: {str(e)[:50]}... - using CPU")
     
     # GPU 메모리 정보 (GPU 3번)
     try:
         import pynvml
         pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 첫 번째 GPU
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # CUDA_VISIBLE_DEVICES=3이므로 0번이 GPU 3번
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
         total = info.total // 1024**2  # MB
         free = info.free // 1024**2
-        print(f"🚀 GPU Memory: {free}MB free / {total}MB total")
+        print(f"🚀 GPU #3 Memory: {free}MB free / {total}MB total")
         if free > 4000:  # 4GB 이상
             print("💪 High GPU memory available - enabling intensive mode")
     except:
-        print("📊 GPU memory info not available")
+        print("📊 GPU #3 memory info not available")
     
     if not lgb_gpu or not xgb_gpu:
         print("❌ GPU requirements not met:")
@@ -169,13 +173,15 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
     if not use_gpu:
         raise RuntimeError("🚫 GPU mode required! Use --gpu flag or remove --gpu to allow CPU")
     
-    # GPU 전용 설정 - 강제 GPU 사용
+    # GPU 전용 설정 - 강제 GPU #3 사용
     params["device"] = "gpu" 
     params["gpu_use_dp"] = True
+    params["gpu_platform_id"] = 0
+    params["gpu_device_id"] = 0  # CUDA_VISIBLE_DEVICES=3으로 설정했으므로 0번이 실제 GPU 3번
     params["max_bin"] = 255
     params["num_threads"] = 1  # GPU 사용 시 스레드 제한
     params["force_col_wise"] = True  # GPU 최적화
-    print(f"🔥 LightGBM forcing GPU usage with device=gpu")
+    print(f"🔥 LightGBM forcing GPU #3 usage with device=gpu")
     
     model = lgb.LGBMRegressor(**params)
     
@@ -214,12 +220,13 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
     if not use_gpu:
         raise RuntimeError("🚫 GPU mode required! Use --gpu flag or remove --gpu to allow CPU")
     
-    # GPU 전용 설정 - 강제 GPU 사용
+    # GPU 전용 설정 - 강제 GPU #3 사용
     params["tree_method"] = "gpu_hist"
+    params["gpu_id"] = 0  # CUDA_VISIBLE_DEVICES=3으로 설정했으므로 0번이 실제 GPU 3번
     params["max_bin"] = 256
     params["grow_policy"] = "lossguide"
     params["predictor"] = "gpu_predictor"  # GPU 예측기 강제
-    print(f"🔥 XGBoost forcing GPU usage with tree_method=gpu_hist")
+    print(f"🔥 XGBoost forcing GPU #3 usage with tree_method=gpu_hist")
     
     model = xgb.XGBRegressor(**params)
     model.fit(X_tr, y_tr)  # Optuna objective에서는 early stopping 제거
@@ -284,11 +291,13 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "num_threads": -1,
         })
         
-        # GPU 전용 - 무조건 GPU 사용
+        # GPU 전용 - 무조건 GPU #3 사용
         if not lgb_gpu:
             raise RuntimeError("🚫 LightGBM GPU not available! Cannot proceed.")
         best_lgb_params["device"] = "gpu"
         best_lgb_params["gpu_use_dp"] = True
+        best_lgb_params["gpu_platform_id"] = 0
+        best_lgb_params["gpu_device_id"] = 0  # CUDA_VISIBLE_DEVICES=3이므로 0번이 GPU 3번
         
         model_lgb = lgb.LGBMRegressor(**best_lgb_params)
         # GPU 전용 early stopping  
@@ -336,10 +345,11 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "n_jobs": -1,
         })
         
-        # GPU 전용 - 무조건 GPU 사용
+        # GPU 전용 - 무조건 GPU #3 사용
         if not xgb_gpu:
             raise RuntimeError("🚫 XGBoost GPU not available! Cannot proceed.")
         best_xgb_params["tree_method"] = "gpu_hist"
+        best_xgb_params["gpu_id"] = 0  # CUDA_VISIBLE_DEVICES=3이므로 0번이 GPU 3번
         
         model_xgb = xgb.XGBRegressor(**best_xgb_params)
         # GPU 전용 early stopping
