@@ -23,8 +23,7 @@ from sklearn.model_selection import TimeSeriesSplit
 import optuna
 warnings.filterwarnings("ignore")
 
-# GPU 강제 사용 설정
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"  # GPU 3번만 보이도록
+# GPU 설정 (모든 GPU 사용 가능)
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
 # Optuna 로깅 억제
@@ -49,17 +48,15 @@ def check_gpu_support():
         y_test = np.random.rand(100)
         lgb_test = lgb.LGBMRegressor(
             device="gpu", 
-            gpu_device_id=3,
-            gpu_platform_id=0,
             max_bin=255,
             n_estimators=10, 
             verbose=-1
         )
         lgb_test.fit(X_test, y_test)
         lgb_gpu = True
-        print("✅ LightGBM GPU #3 support confirmed (training test passed)")
+        print("✅ LightGBM GPU support confirmed (training test passed)")
     except Exception as e:
-        print(f"❌ LightGBM GPU #3 failed: {str(e)[:50]}... - using CPU")
+        print(f"❌ LightGBM GPU failed: {str(e)[:50]}... - using CPU")
     
     # XGBoost GPU 실제 학습 테스트 (GPU 3번)
     try:
@@ -68,30 +65,29 @@ def check_gpu_support():
         y_test = np.random.rand(100)
         xgb_test = xgb.XGBRegressor(
             tree_method="gpu_hist", 
-            gpu_id=3,
             max_bin=256,
             n_estimators=10, 
             verbosity=0
         )
         xgb_test.fit(X_test, y_test)
         xgb_gpu = True
-        print("✅ XGBoost GPU #3 support confirmed (training test passed)")
+        print("✅ XGBoost GPU support confirmed (training test passed)")
     except Exception as e:
-        print(f"❌ XGBoost GPU #3 failed: {str(e)[:50]}... - using CPU")
+        print(f"❌ XGBoost GPU failed: {str(e)[:50]}... - using CPU")
     
     # GPU 메모리 정보 (GPU 3번)
     try:
         import pynvml
         pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(3)  # GPU 3번
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 첫 번째 GPU
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
         total = info.total // 1024**2  # MB
         free = info.free // 1024**2
-        print(f"🚀 GPU #3 Memory: {free}MB free / {total}MB total")
+        print(f"🚀 GPU Memory: {free}MB free / {total}MB total")
         if free > 4000:  # 4GB 이상
             print("💪 High GPU memory available - enabling intensive mode")
     except:
-        print("📊 GPU #3 memory info not available")
+        print("📊 GPU memory info not available")
     
     if not lgb_gpu or not xgb_gpu:
         print("❌ GPU requirements not met:")
@@ -167,13 +163,11 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
     if not use_gpu:
         raise RuntimeError("🚫 GPU mode required! Use --gpu flag or remove --gpu to allow CPU")
     
-    # GPU 전용 설정
+    # GPU 전용 설정 (아무 GPU나 사용)
     params["device"] = "gpu" 
     params["gpu_use_dp"] = True
-    params["gpu_platform_id"] = 0
-    params["gpu_device_id"] = 3  # GPU 3번 사용
     params["max_bin"] = 255  # GPU에서 안전한 bin 크기
-    print(f"🔥 LightGBM using GPU device {params['gpu_device_id']}")
+    print(f"🔥 LightGBM using GPU (auto-select device)")
     
     model = lgb.LGBMRegressor(**params)
     
@@ -212,12 +206,11 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
     if not use_gpu:
         raise RuntimeError("🚫 GPU mode required! Use --gpu flag or remove --gpu to allow CPU")
     
-    # GPU 전용 설정
+    # GPU 전용 설정 (아무 GPU나 사용)
     params["tree_method"] = "gpu_hist"
-    params["gpu_id"] = 3  # GPU 3번 사용
     params["max_bin"] = 256  # GPU에서 안전한 bin 크기
     params["grow_policy"] = "lossguide"  # GPU 최적화 정책
-    print(f"🔥 XGBoost using GPU device {params['gpu_id']}")
+    print(f"🔥 XGBoost using GPU (auto-select device)")
     
     model = xgb.XGBRegressor(**params)
     model.fit(X_tr, y_tr)  # Optuna objective에서는 early stopping 제거
@@ -254,7 +247,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         y_val_f = y_tr_log[val_idx]
 
         # LightGBM 최적화 (GPU 집약적)
-        print(f"      🔥 Starting LightGBM GPU optimization on device 3...")
+        print(f"      🔥 Starting LightGBM GPU optimization...")
         study_lgb = optuna.create_study(
             direction="minimize",
             sampler=optuna.samplers.TPESampler(n_startup_trials=20)  # 더 빠른 수렴
@@ -287,8 +280,6 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             raise RuntimeError("🚫 LightGBM GPU not available! Cannot proceed.")
         best_lgb_params["device"] = "gpu"
         best_lgb_params["gpu_use_dp"] = True
-        best_lgb_params["gpu_platform_id"] = 0
-        best_lgb_params["gpu_device_id"] = 3
         
         model_lgb = lgb.LGBMRegressor(**best_lgb_params)
         # GPU 전용 early stopping  
@@ -308,7 +299,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         best_iters_lgb.append(model_lgb.best_iteration_)
 
         # XGBoost 최적화 (GPU 집약적)
-        print(f"      🔥 Starting XGBoost GPU optimization on device 3...")
+        print(f"      🔥 Starting XGBoost GPU optimization...")
         study_xgb = optuna.create_study(
             direction="minimize",
             sampler=optuna.samplers.TPESampler(n_startup_trials=20)  # 더 빠른 수렴
@@ -340,7 +331,6 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         if not xgb_gpu:
             raise RuntimeError("🚫 XGBoost GPU not available! Cannot proceed.")
         best_xgb_params["tree_method"] = "gpu_hist"
-        best_xgb_params["gpu_id"] = 3
         
         model_xgb = xgb.XGBRegressor(**best_xgb_params)
         # GPU 전용 early stopping
@@ -411,7 +401,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
 ###########################################################
 
 def run_pipeline(train_path: Path, test_path: Path, info_path: Path, n_trials: int, use_gpu: bool):
-    print("📥 Loading data ...")
+    print("📥 Loading data ... (CPU preprocessing)")
     train_df = pd.read_csv(train_path, parse_dates=["일시"])
     test_df = pd.read_csv(test_path, parse_dates=["일시"])
     info_df = pd.read_csv(info_path)
@@ -437,6 +427,7 @@ def run_pipeline(train_path: Path, test_path: Path, info_path: Path, n_trials: i
     all_df = pd.concat([train, test], ignore_index=True)
 
     # Feature engineering
+    print("🔧 Feature engineering ... (CPU preprocessing)")
     all_df = add_time_features(all_df)
     all_df = add_weather_features(all_df)
 
@@ -457,6 +448,7 @@ def run_pipeline(train_path: Path, test_path: Path, info_path: Path, n_trials: i
     df_test = all_df[all_df["전력소비량(kWh)"].isna()].copy()
 
     # train per building
+    print("🏗️ Starting building-wise training ... (switching to GPU)")
     sub_parts = []
     scores = []
     for bid in df_train["건물번호"].unique():
