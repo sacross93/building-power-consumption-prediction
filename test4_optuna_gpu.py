@@ -146,7 +146,7 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
         params["gpu_id"] = 0
     
     model = xgb.XGBRegressor(**params)
-    model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
+    model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)])
     preds = model.predict(X_val)
     return smape_np(np.expm1(y_val), np.expm1(preds))
 
@@ -203,7 +203,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             best_lgb_params["gpu_use_dp"] = True
         
         model_lgb = lgb.LGBMRegressor(**best_lgb_params)
-        model_lgb.fit(X_tr, y_tr_f, categorical_feature=["건물번호"], verbose=-1)
+        model_lgb.fit(X_tr, y_tr_f, categorical_feature=["건물번호"])
         oof_pred_lgb[val_idx] = model_lgb.predict(X_val)
 
         # XGBoost 최적화
@@ -232,7 +232,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             best_xgb_params["gpu_id"] = 0
         
         model_xgb = xgb.XGBRegressor(**best_xgb_params)
-        model_xgb.fit(X_tr, y_tr_f, verbose=False)
+        model_xgb.fit(X_tr, y_tr_f)
         oof_pred_xgb[val_idx] = model_xgb.predict(X_val)
 
     # 앙상블 (LightGBM 60% + XGBoost 40%)
@@ -242,10 +242,10 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
 
     # train final models on all data
     final_lgb = lgb.LGBMRegressor(**best_lgb_params)
-    final_lgb.fit(X_scaled, y_tr_log, categorical_feature=["건물번호"], verbose=-1)
+    final_lgb.fit(X_scaled, y_tr_log, categorical_feature=["건물번호"])
     
     final_xgb = xgb.XGBRegressor(**best_xgb_params)
-    final_xgb.fit(X_scaled, y_tr_log, verbose=False)
+    final_xgb.fit(X_scaled, y_tr_log)
 
     # prediction
     preds_df = None
