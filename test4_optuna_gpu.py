@@ -22,6 +22,9 @@ from sklearn.model_selection import TimeSeriesSplit
 import optuna
 warnings.filterwarnings("ignore")
 
+# Optuna 로깅 억제
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+
 KR_HOLIDAYS = holidays.KR()
 SEED = 42
 
@@ -116,12 +119,19 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
         params["gpu_use_dp"] = True
     
     model = lgb.LGBMRegressor(**params)
+    
+    # 오버피팅 감지를 위한 콜백 설정
+    callbacks = [
+        lgb.early_stopping(150, verbose=False),
+        lgb.log_evaluation(period=500)  # 500 에폭마다만 출력
+    ]
+    
     model.fit(
         X_tr, y_tr,
         eval_set=[(X_val, y_val)],
         eval_metric=lambda y,p: ("SMAPE", smape_np(np.expm1(y), np.expm1(p)), False),
         categorical_feature=cat_cols,
-        callbacks=[lgb.early_stopping(150, verbose=False)],
+        callbacks=callbacks,
     )
     preds = model.predict(X_val)
     return smape_np(np.expm1(y_val), np.expm1(preds))
@@ -138,7 +148,7 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
         "reg_alpha": trial.suggest_float("ra", 1e-8, 10.0, log=True),
         "reg_lambda": trial.suggest_float("rl", 1e-8, 10.0, log=True),
         "n_estimators": 2000,
-        "verbosity": 0,
+        "verbosity": 0,  # 완전 무음
     }
     
     if use_gpu:
@@ -150,7 +160,7 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
         X_tr, y_tr, 
         eval_set=[(X_val, y_val)],
         early_stopping_rounds=100,
-        verbose=False
+        verbose=0  # 완전 무음으로 설정
     )
     preds = model.predict(X_val)
     return smape_np(np.expm1(y_val), np.expm1(preds))
@@ -188,8 +198,10 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         study_lgb = optuna.create_study(direction="minimize")
         study_lgb.optimize(
             lambda tr: lgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, ["건물번호"], use_gpu and lgb_gpu), 
-            n_trials=n_trials//2
+            n_trials=n_trials//2,
+            show_progress_bar=False  # 진행률 바 숨김
         )
+        print(f"      🔍 LGB best SMAPE: {study_lgb.best_value:.3f}%")
         best_lgb_params = study_lgb.best_params
         best_lgb_params.update({
             "objective": "regression_l1",
@@ -210,11 +222,17 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             best_lgb_params["gpu_use_dp"] = True
         
         model_lgb = lgb.LGBMRegressor(**best_lgb_params)
+        # 오버피팅 감지 및 제어
+        callbacks_lgb = [
+            lgb.early_stopping(150, verbose=False),
+            lgb.log_evaluation(period=0)  # 로그 출력 비활성화
+        ]
+        
         model_lgb.fit(
             X_tr, y_tr_f, 
             eval_set=[(X_val, y_val_f)],
             categorical_feature=["건물번호"],
-            callbacks=[lgb.early_stopping(150, verbose=False)]
+            callbacks=callbacks_lgb
         )
         oof_pred_lgb[val_idx] = model_lgb.predict(X_val)
         best_iters_lgb.append(model_lgb.best_iteration_)
@@ -223,8 +241,10 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         study_xgb = optuna.create_study(direction="minimize")
         study_xgb.optimize(
             lambda tr: xgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, use_gpu and xgb_gpu),
-            n_trials=n_trials//2
+            n_trials=n_trials//2,
+            show_progress_bar=False  # 진행률 바 숨김
         )
+        print(f"      🔍 XGB best SMAPE: {study_xgb.best_value:.3f}%")
         best_xgb_params = study_xgb.best_params
         best_xgb_params.update({
             "objective": "reg:squarederror",
@@ -249,7 +269,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             X_tr, y_tr_f,
             eval_set=[(X_val, y_val_f)],
             early_stopping_rounds=150,
-            verbose=False
+            verbose=0  # 완전 무음
         )
         oof_pred_xgb[val_idx] = model_xgb.predict(X_val)
         best_iters_xgb.append(model_xgb.best_iteration)
@@ -257,7 +277,21 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
     # 앙상블 (LightGBM 60% + XGBoost 40%)
     oof_pred_ensemble = 0.6 * oof_pred_lgb + 0.4 * oof_pred_xgb
     sm = smape_np(df_tr["전력소비량(kWh)"].values, np.expm1(oof_pred_ensemble)*area_tr)
-    print(f"    OOF SMAPE: {sm:.3f}%")
+    
+    # 오버피팅 체크: 개별 모델과 앙상블 성능 비교
+    sm_lgb = smape_np(df_tr["전력소비량(kWh)"].values, np.expm1(oof_pred_lgb)*area_tr)
+    sm_xgb = smape_np(df_tr["전력소비량(kWh)"].values, np.expm1(oof_pred_xgb)*area_tr)
+    
+    print(f"    📊 LGB: {sm_lgb:.3f}% | XGB: {sm_xgb:.3f}% | Ensemble: {sm:.3f}%")
+    
+    # 오버피팅 경고
+    if sm > min(sm_lgb, sm_xgb) + 0.5:
+        print(f"    ⚠️  앙상블 성능 저하 감지 (개별 모델보다 {sm - min(sm_lgb, sm_xgb):.2f}%p 높음)")
+    
+    if np.mean(best_iters_lgb) < 200 or np.mean(best_iters_xgb) < 200:
+        print(f"    ⚠️  조기 수렴 감지 (LGB: {np.mean(best_iters_lgb):.0f}, XGB: {np.mean(best_iters_xgb):.0f})")
+    elif np.mean(best_iters_lgb) > 2500 or np.mean(best_iters_xgb) > 2500:
+        print(f"    ⚠️  오버피팅 위험 (LGB: {np.mean(best_iters_lgb):.0f}, XGB: {np.mean(best_iters_xgb):.0f})")
 
     # train final models on all data with optimal iterations
     # Use average best iterations from cross-validation with some buffer
