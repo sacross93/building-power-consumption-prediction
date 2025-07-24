@@ -33,7 +33,7 @@ SEED = 42
 ###########################################################
 
 def check_gpu_support():
-    """GPU 지원 가능 여부 확인"""
+    """GPU 지원 가능 여부 확인 및 성능 정보"""
     try:
         # LightGBM GPU 확인
         lgb_test = lgb.LGBMRegressor(device="gpu", n_estimators=1)
@@ -51,6 +51,20 @@ def check_gpu_support():
     except Exception:
         xgb_gpu = False
         print("❌ XGBoost GPU not available, using CPU")
+    
+    # GPU 메모리 정보 (nvidia-ml-py가 있다면)
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        total = info.total // 1024**2  # MB
+        free = info.free // 1024**2
+        print(f"🚀 GPU Memory: {free}MB free / {total}MB total")
+        if free > 4000:  # 4GB 이상
+            print("💪 High GPU memory available - enabling intensive mode")
+    except:
+        print("📊 GPU memory info not available")
     
     return lgb_gpu, xgb_gpu
 
@@ -104,19 +118,23 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
         "objective": "regression_l1",
         "random_state": SEED,
         "learning_rate": trial.suggest_float("lr", 0.003, 0.1, log=True),
-        "num_leaves": trial.suggest_int("num_leaves", 16, 256),
+        "num_leaves": trial.suggest_int("num_leaves", 16, 512),  # GPU에서 더 큰 트리 가능
         "subsample": trial.suggest_float("subsample", 0.6, 1.0),
         "colsample_bytree": trial.suggest_float("colsample", 0.6, 1.0),
         "min_data_in_leaf": trial.suggest_int("min_leaf", 5, 100),
         "reg_alpha": trial.suggest_float("ra", 1e-8, 10.0, log=True),
         "reg_lambda": trial.suggest_float("rl", 1e-8, 10.0, log=True),
-        "n_estimators": 2000,
+        "n_estimators": 5000,  # GPU로 더 많은 estimators
         "verbose": -1,
+        "num_threads": -1,  # 모든 스레드 사용
     }
     
     if use_gpu:
         params["device"] = "gpu"
         params["gpu_use_dp"] = True
+        params["gpu_platform_id"] = 0
+        params["gpu_device_id"] = 0
+        params["max_bin"] = 511  # GPU에서 더 많은 bin 사용
     
     model = lgb.LGBMRegressor(**params)
     
@@ -141,19 +159,22 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
         "objective": "reg:squarederror",
         "random_state": SEED,
         "learning_rate": trial.suggest_float("lr", 0.003, 0.1, log=True),
-        "max_depth": trial.suggest_int("max_depth", 3, 12),
+        "max_depth": trial.suggest_int("max_depth", 3, 15),  # GPU에서 더 깊은 트리
         "subsample": trial.suggest_float("subsample", 0.6, 1.0),
         "colsample_bytree": trial.suggest_float("colsample", 0.6, 1.0),
         "min_child_weight": trial.suggest_int("min_child_weight", 1, 20),
         "reg_alpha": trial.suggest_float("ra", 1e-8, 10.0, log=True),
         "reg_lambda": trial.suggest_float("rl", 1e-8, 10.0, log=True),
-        "n_estimators": 2000,
+        "n_estimators": 5000,  # GPU로 더 많은 estimators
         "verbosity": 0,  # 완전 무음
+        "n_jobs": -1,  # 모든 스레드 사용
     }
     
     if use_gpu:
         params["tree_method"] = "gpu_hist"
         params["gpu_id"] = 0
+        params["max_bin"] = 512  # GPU에서 더 많은 bin
+        params["grow_policy"] = "lossguide"  # GPU 최적화 정책
     
     model = xgb.XGBRegressor(**params)
     model.fit(
@@ -194,12 +215,16 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         X_val = X_scaled.iloc[val_idx]
         y_val_f = y_tr_log[val_idx]
 
-        # LightGBM 최적화
-        study_lgb = optuna.create_study(direction="minimize")
+        # LightGBM 최적화 (GPU 집약적)
+        study_lgb = optuna.create_study(
+            direction="minimize",
+            sampler=optuna.samplers.TPESampler(n_startup_trials=20)  # 더 빠른 수렴
+        )
         study_lgb.optimize(
             lambda tr: lgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, ["건물번호"], use_gpu and lgb_gpu), 
-            n_trials=n_trials//2,
-            show_progress_bar=False  # 진행률 바 숨김
+            n_trials=n_trials,  # 더 많은 trials (XGB와 동시 실행)
+            show_progress_bar=False,
+            n_jobs=1  # GPU는 단일 작업이 더 효율적
         )
         print(f"      🔍 LGB best SMAPE: {study_lgb.best_value:.3f}%")
         best_lgb_params = study_lgb.best_params
@@ -213,8 +238,9 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "min_data_in_leaf": best_lgb_params.pop("min_leaf"),
             "reg_alpha": best_lgb_params.pop("ra"),
             "reg_lambda": best_lgb_params.pop("rl"),
-            "n_estimators": 3000,
+            "n_estimators": 8000,  # GPU로 더 많은 estimators
             "verbose": -1,
+            "num_threads": -1,
         })
         
         if use_gpu and lgb_gpu:
@@ -222,9 +248,10 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             best_lgb_params["gpu_use_dp"] = True
         
         model_lgb = lgb.LGBMRegressor(**best_lgb_params)
-        # 오버피팅 감지 및 제어
+        # GPU 최적화된 early stopping (더 관대하게)
+        patience = 300 if use_gpu and lgb_gpu else 150
         callbacks_lgb = [
-            lgb.early_stopping(150, verbose=False),
+            lgb.early_stopping(patience, verbose=False),
             lgb.log_evaluation(period=0)  # 로그 출력 비활성화
         ]
         
@@ -237,12 +264,16 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         oof_pred_lgb[val_idx] = model_lgb.predict(X_val)
         best_iters_lgb.append(model_lgb.best_iteration_)
 
-        # XGBoost 최적화
-        study_xgb = optuna.create_study(direction="minimize")
+        # XGBoost 최적화 (GPU 집약적)
+        study_xgb = optuna.create_study(
+            direction="minimize",
+            sampler=optuna.samplers.TPESampler(n_startup_trials=20)  # 더 빠른 수렴
+        )
         study_xgb.optimize(
             lambda tr: xgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, use_gpu and xgb_gpu),
-            n_trials=n_trials//2,
-            show_progress_bar=False  # 진행률 바 숨김
+            n_trials=n_trials,  # 더 많은 trials
+            show_progress_bar=False,
+            n_jobs=1  # GPU는 단일 작업이 더 효율적
         )
         print(f"      🔍 XGB best SMAPE: {study_xgb.best_value:.3f}%")
         best_xgb_params = study_xgb.best_params
@@ -256,8 +287,9 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "min_child_weight": best_xgb_params.pop("min_child_weight"),
             "reg_alpha": best_xgb_params.pop("ra"),
             "reg_lambda": best_xgb_params.pop("rl"),
-            "n_estimators": 3000,
+            "n_estimators": 8000,  # GPU로 더 많은 estimators
             "verbosity": 0,
+            "n_jobs": -1,
         })
         
         if use_gpu and xgb_gpu:
@@ -265,10 +297,12 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             best_xgb_params["gpu_id"] = 0
         
         model_xgb = xgb.XGBRegressor(**best_xgb_params)
+        # GPU 최적화된 early stopping
+        xgb_patience = 300 if use_gpu and xgb_gpu else 150
         model_xgb.fit(
             X_tr, y_tr_f,
             eval_set=[(X_val, y_val_f)],
-            early_stopping_rounds=150,
+            early_stopping_rounds=xgb_patience,
             verbose=0  # 완전 무음
         )
         oof_pred_xgb[val_idx] = model_xgb.predict(X_val)
