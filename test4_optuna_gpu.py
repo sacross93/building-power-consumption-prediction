@@ -88,9 +88,14 @@ def check_gpu_support():
     except:
         print("📊 GPU #3 memory info not available")
     
-    if not lgb_gpu and not xgb_gpu:
-        print("🔄 Falling back to CPU-optimized high-performance mode")
+    if not lgb_gpu or not xgb_gpu:
+        print("❌ GPU requirements not met:")
+        print(f"   LightGBM GPU: {'✅' if lgb_gpu else '❌'}")
+        print(f"   XGBoost GPU: {'✅' if xgb_gpu else '❌'}")
+        print("🚫 Both GPUs must be available for this script!")
+        raise RuntimeError("GPU requirement not satisfied. Cannot proceed.")
     
+    print("🎯 All GPU requirements satisfied - proceeding with full GPU mode")
     return lgb_gpu, xgb_gpu
 
 ###########################################################
@@ -154,16 +159,15 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
         "num_threads": -1,  # 모든 스레드 사용
     }
     
-    if use_gpu:
-        params["device"] = "gpu" 
-        params["gpu_use_dp"] = True
-        params["gpu_platform_id"] = 0
-        params["gpu_device_id"] = 3  # GPU 3번 사용
-        params["max_bin"] = 255  # GPU에서 안전한 bin 크기
-    else:
-        # CPU 최적화 설정
-        params["max_bin"] = 255  # CPU에서 안정적인 bin 수
-        params["feature_pre_filter"] = False
+    if not use_gpu:
+        raise RuntimeError("🚫 GPU mode required! Use --gpu flag or remove --gpu to allow CPU")
+    
+    # GPU 전용 설정
+    params["device"] = "gpu" 
+    params["gpu_use_dp"] = True
+    params["gpu_platform_id"] = 0
+    params["gpu_device_id"] = 3  # GPU 3번 사용
+    params["max_bin"] = 255  # GPU에서 안전한 bin 크기
     
     model = lgb.LGBMRegressor(**params)
     
@@ -199,15 +203,14 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
         "n_jobs": -1,  # 모든 스레드 사용
     }
     
-    if use_gpu:
-        params["tree_method"] = "gpu_hist"
-        params["gpu_id"] = 3  # GPU 3번 사용
-        params["max_bin"] = 256  # GPU에서 안전한 bin 크기
-        params["grow_policy"] = "lossguide"  # GPU 최적화 정책
-    else:
-        # CPU 최적화 설정
-        params["tree_method"] = "hist"  # CPU에서 빠른 히스토그램 방식
-        params["max_bin"] = 256  # CPU에서 안정적인 bin 수
+    if not use_gpu:
+        raise RuntimeError("🚫 GPU mode required! Use --gpu flag or remove --gpu to allow CPU")
+    
+    # GPU 전용 설정
+    params["tree_method"] = "gpu_hist"
+    params["gpu_id"] = 3  # GPU 3번 사용
+    params["max_bin"] = 256  # GPU에서 안전한 bin 크기
+    params["grow_policy"] = "lossguide"  # GPU 최적화 정책
     
     model = xgb.XGBRegressor(**params)
     model.fit(X_tr, y_tr)  # Optuna objective에서는 early stopping 제거
@@ -249,7 +252,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             sampler=optuna.samplers.TPESampler(n_startup_trials=20)  # 더 빠른 수렴
         )
         study_lgb.optimize(
-            lambda tr: lgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, "auto", use_gpu and lgb_gpu), 
+            lambda tr: lgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, "auto", True), 
             n_trials=n_trials,  # 더 많은 trials (XGB와 동시 실행)
             show_progress_bar=False,
             n_jobs=1  # GPU는 단일 작업이 더 효율적
@@ -271,13 +274,17 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "num_threads": -1,
         })
         
-        if use_gpu and lgb_gpu:
-            best_lgb_params["device"] = "gpu"
-            best_lgb_params["gpu_use_dp"] = True
+        # GPU 전용 - 무조건 GPU 사용
+        if not lgb_gpu:
+            raise RuntimeError("🚫 LightGBM GPU not available! Cannot proceed.")
+        best_lgb_params["device"] = "gpu"
+        best_lgb_params["gpu_use_dp"] = True
+        best_lgb_params["gpu_platform_id"] = 0
+        best_lgb_params["gpu_device_id"] = 3
         
         model_lgb = lgb.LGBMRegressor(**best_lgb_params)
-        # GPU 최적화된 early stopping (더 관대하게)
-        patience = 300 if use_gpu and lgb_gpu else 150
+        # GPU 전용 early stopping  
+        patience = 300
         callbacks_lgb = [
             lgb.early_stopping(patience, verbose=False),
             lgb.log_evaluation(period=0)  # 로그 출력 비활성화
@@ -298,7 +305,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             sampler=optuna.samplers.TPESampler(n_startup_trials=20)  # 더 빠른 수렴
         )
         study_xgb.optimize(
-            lambda tr: xgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, use_gpu and xgb_gpu),
+            lambda tr: xgb_objective(tr, X_tr, y_tr_f, X_val, y_val_f, True),
             n_trials=n_trials,  # 더 많은 trials
             show_progress_bar=False,
             n_jobs=1  # GPU는 단일 작업이 더 효율적
@@ -320,13 +327,15 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "n_jobs": -1,
         })
         
-        if use_gpu and xgb_gpu:
-            best_xgb_params["tree_method"] = "gpu_hist"
-            best_xgb_params["gpu_id"] = 0
+        # GPU 전용 - 무조건 GPU 사용
+        if not xgb_gpu:
+            raise RuntimeError("🚫 XGBoost GPU not available! Cannot proceed.")
+        best_xgb_params["tree_method"] = "gpu_hist"
+        best_xgb_params["gpu_id"] = 3
         
         model_xgb = xgb.XGBRegressor(**best_xgb_params)
-        # GPU 최적화된 early stopping
-        xgb_patience = 300 if use_gpu and xgb_gpu else 150
+        # GPU 전용 early stopping
+        xgb_patience = 300
         model_xgb.fit(
             X_tr, y_tr_f,
             eval_set=[(X_val, y_val_f)],
