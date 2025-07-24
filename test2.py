@@ -96,7 +96,6 @@ def train_per_type(df_train, df_test, features, cat_cols):
         reg_alpha=0.1,        # 정규화 조정
         reg_lambda=0.1,
         min_gain_to_split=0.0,
-        verbose=-1,           # 출력 최소화
     )
 
     tscv = TimeSeriesSplit(n_splits=5, test_size=24 * 7)
@@ -129,7 +128,7 @@ def train_per_type(df_train, df_test, features, cat_cols):
         final_params = base_params.copy()
         final_params["n_estimators"] = int(np.mean(best_iters) * 1.1)
         final_model = lgb.LGBMRegressor(**final_params)
-        final_model.fit(X, y, categorical_feature=cat_cols, verbose=-1)
+        final_model.fit(X, y, categorical_feature=cat_cols)
 
         part_test = df_test[df_test["건물유형"] == btype]
         if not part_test.empty:
