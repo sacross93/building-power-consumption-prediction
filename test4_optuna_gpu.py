@@ -146,7 +146,12 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
         params["gpu_id"] = 0
     
     model = xgb.XGBRegressor(**params)
-    model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)])
+    model.fit(
+        X_tr, y_tr, 
+        eval_set=[(X_val, y_val)],
+        early_stopping_rounds=100,
+        verbose=False
+    )
     preds = model.predict(X_val)
     return smape_np(np.expm1(y_val), np.expm1(preds))
 
@@ -169,6 +174,8 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
 
     oof_pred_lgb = np.zeros(len(df_tr))
     oof_pred_xgb = np.zeros(len(df_tr))
+    best_iters_lgb = []
+    best_iters_xgb = []
     
     for fold,(tr_idx,val_idx) in enumerate(tscv.split(X_scaled)):
         print(f"    Fold {fold+1}/3")
@@ -203,8 +210,14 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             best_lgb_params["gpu_use_dp"] = True
         
         model_lgb = lgb.LGBMRegressor(**best_lgb_params)
-        model_lgb.fit(X_tr, y_tr_f, categorical_feature=["건물번호"])
+        model_lgb.fit(
+            X_tr, y_tr_f, 
+            eval_set=[(X_val, y_val_f)],
+            categorical_feature=["건물번호"],
+            callbacks=[lgb.early_stopping(150, verbose=False)]
+        )
         oof_pred_lgb[val_idx] = model_lgb.predict(X_val)
+        best_iters_lgb.append(model_lgb.best_iteration_)
 
         # XGBoost 최적화
         study_xgb = optuna.create_study(direction="minimize")
@@ -232,19 +245,37 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             best_xgb_params["gpu_id"] = 0
         
         model_xgb = xgb.XGBRegressor(**best_xgb_params)
-        model_xgb.fit(X_tr, y_tr_f)
+        model_xgb.fit(
+            X_tr, y_tr_f,
+            eval_set=[(X_val, y_val_f)],
+            early_stopping_rounds=150,
+            verbose=False
+        )
         oof_pred_xgb[val_idx] = model_xgb.predict(X_val)
+        best_iters_xgb.append(model_xgb.best_iteration)
 
     # 앙상블 (LightGBM 60% + XGBoost 40%)
     oof_pred_ensemble = 0.6 * oof_pred_lgb + 0.4 * oof_pred_xgb
     sm = smape_np(df_tr["전력소비량(kWh)"].values, np.expm1(oof_pred_ensemble)*area_tr)
     print(f"    OOF SMAPE: {sm:.3f}%")
 
-    # train final models on all data
-    final_lgb = lgb.LGBMRegressor(**best_lgb_params)
+    # train final models on all data with optimal iterations
+    # Use average best iterations from cross-validation with some buffer
+    avg_lgb_iter = int(np.mean(best_iters_lgb) * 1.1) if best_iters_lgb else 3000
+    avg_xgb_iter = int(np.mean(best_iters_xgb) * 1.1) if best_iters_xgb else 3000
+    
+    best_lgb_params_final = best_lgb_params.copy()
+    best_lgb_params_final['n_estimators'] = avg_lgb_iter
+    
+    best_xgb_params_final = best_xgb_params.copy()
+    best_xgb_params_final['n_estimators'] = avg_xgb_iter
+    
+    print(f"    Using LGB iters: {avg_lgb_iter}, XGB iters: {avg_xgb_iter}")
+    
+    final_lgb = lgb.LGBMRegressor(**best_lgb_params_final)
     final_lgb.fit(X_scaled, y_tr_log, categorical_feature=["건물번호"])
     
-    final_xgb = xgb.XGBRegressor(**best_xgb_params)
+    final_xgb = xgb.XGBRegressor(**best_xgb_params_final)
     final_xgb.fit(X_scaled, y_tr_log)
 
     # prediction
