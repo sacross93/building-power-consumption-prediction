@@ -466,6 +466,10 @@ def run_pipeline(train_path: Path, test_path: Path, info_path: Path, n_trials: i
     df_train = all_df[~all_df["전력소비량(kWh)"].isna()].copy()
     df_test = all_df[all_df["전력소비량(kWh)"].isna()].copy()
 
+    # num_date_time 컬럼 생성 (submission.csv를 위해 필요)
+    print("🔧 Creating num_date_time column...")
+    df_test['num_date_time'] = df_test['건물번호'].astype(str) + '_' + df_test['일시'].dt.strftime('%Y%m%d %H')
+
     # train per building
     print("🏗️ Starting building-wise training ... (switching to GPU)")
     sub_parts = []
@@ -475,21 +479,39 @@ def run_pipeline(train_path: Path, test_path: Path, info_path: Path, n_trials: i
         tr_b = df_train[df_train["건물번호"] == bid].copy()
         te_b = df_test[df_test["건물번호"] == bid].copy()
         if len(tr_b) < 200:
+            print(f"  ⚠️ Skipping Building {bid} - insufficient data ({len(tr_b)} < 200)")
             continue
         sm, preds = train_building(tr_b, te_b, feats, n_trials, use_gpu, lgb_gpu, xgb_gpu)
         scores.append(sm)
         if preds is not None:
             sub_parts.append(preds)
+            print(f"  ✅ Building {bid} predictions added ({len(preds)} rows)")
 
     print(f"\n📈 Average OOF SMAPE: {np.mean(scores):.3f}%")
-    submission = pd.concat(sub_parts, ignore_index=True)
-    # align with sample_submission if exists
-    sample_path = test_path.parent / "sample_submission.csv"
-    if sample_path.exists():
-        sample = pd.read_csv(sample_path).drop(columns=["answer"], errors="ignore")
-        submission = sample.merge(submission, on="num_date_time", how="left")
-    submission.to_csv("submission.csv", index=False)
-    print("✅ submission.csv saved.")
+    
+    if sub_parts:
+        print(f"🔗 Concatenating {len(sub_parts)} building predictions...")
+        submission = pd.concat(sub_parts, ignore_index=True)
+        print(f"   Combined predictions shape: {submission.shape}")
+        
+        # align with sample_submission if exists
+        sample_path = test_path.parent / "sample_submission.csv"
+        if sample_path.exists():
+            print("📋 Aligning with sample_submission.csv...")
+            sample = pd.read_csv(sample_path).drop(columns=["answer"], errors="ignore")
+            submission = sample.merge(submission, on="num_date_time", how="left")
+            print(f"   Final submission shape: {submission.shape}")
+        
+        submission.to_csv("submission.csv", index=False)
+        print("✅ submission.csv saved.")
+    else:
+        print("❌ No predictions generated! Check building data or training process.")
+        # 기본 제출 파일 생성
+        sample_path = test_path.parent / "sample_submission.csv"
+        if sample_path.exists():
+            sample = pd.read_csv(sample_path)
+            sample.to_csv("submission.csv", index=False)
+            print("📝 Default submission.csv created from sample.")
 
 ###########################################################
 if __name__ == "__main__":
