@@ -12,6 +12,7 @@ Energy Consumption Forecast v9 - Optuna + GPU Support
 import argparse
 from pathlib import Path
 import warnings
+import os
 import numpy as np
 import pandas as pd
 import holidays
@@ -21,6 +22,10 @@ from sklearn.preprocessing import RobustScaler
 from sklearn.model_selection import TimeSeriesSplit
 import optuna
 warnings.filterwarnings("ignore")
+
+# GPU 강제 사용 설정
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"  # GPU 3번만 보이도록
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
 # Optuna 로깅 억제
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -168,6 +173,7 @@ def lgb_objective(trial, X_tr, y_tr, X_val, y_val, cat_cols, use_gpu=False):
     params["gpu_platform_id"] = 0
     params["gpu_device_id"] = 3  # GPU 3번 사용
     params["max_bin"] = 255  # GPU에서 안전한 bin 크기
+    print(f"🔥 LightGBM using GPU device {params['gpu_device_id']}")
     
     model = lgb.LGBMRegressor(**params)
     
@@ -211,6 +217,7 @@ def xgb_objective(trial, X_tr, y_tr, X_val, y_val, use_gpu=False):
     params["gpu_id"] = 3  # GPU 3번 사용
     params["max_bin"] = 256  # GPU에서 안전한 bin 크기
     params["grow_policy"] = "lossguide"  # GPU 최적화 정책
+    print(f"🔥 XGBoost using GPU device {params['gpu_id']}")
     
     model = xgb.XGBRegressor(**params)
     model.fit(X_tr, y_tr)  # Optuna objective에서는 early stopping 제거
@@ -240,13 +247,14 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
     best_iters_xgb = []
     
     for fold,(tr_idx,val_idx) in enumerate(tscv.split(X_scaled)):
-        print(f"    Fold {fold+1}/3")
+        print(f"    Fold {fold+1}/3 🚀 Starting GPU training...")
         X_tr = X_scaled.iloc[tr_idx]
         y_tr_f = y_tr_log[tr_idx]
         X_val = X_scaled.iloc[val_idx]
         y_val_f = y_tr_log[val_idx]
 
         # LightGBM 최적화 (GPU 집약적)
+        print(f"      🔥 Starting LightGBM GPU optimization on device 3...")
         study_lgb = optuna.create_study(
             direction="minimize",
             sampler=optuna.samplers.TPESampler(n_startup_trials=20)  # 더 빠른 수렴
@@ -300,6 +308,7 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
         best_iters_lgb.append(model_lgb.best_iteration_)
 
         # XGBoost 최적화 (GPU 집약적)
+        print(f"      🔥 Starting XGBoost GPU optimization on device 3...")
         study_xgb = optuna.create_study(
             direction="minimize",
             sampler=optuna.samplers.TPESampler(n_startup_trials=20)  # 더 빠른 수렴
