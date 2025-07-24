@@ -102,7 +102,6 @@ def objective(trial, X_train, y_train, X_val, y_val, cat_cols, model_type='light
         model.fit(
             X_train, y_train,
             eval_set=[(X_val, y_val)],
-            early_stopping_rounds=100,
             verbose=False
         )
         
@@ -329,7 +328,6 @@ def train_xgboost_optimized(X_train, y_train, X_val, y_val, n_trials=50):
         model.fit(
             X_train, y_train,
             eval_set=[(X_val, y_val)],
-            early_stopping_rounds=200,
             verbose=False
         )
     else:
