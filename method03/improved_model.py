@@ -168,8 +168,8 @@ def main():
         
         final_submission['answer'].fillna(0, inplace=True)
 
-        final_submission.to_csv('submission_improved.csv', index=False)
-        print("submission_improved.csv 파일이 성공적으로 생성되었습니다.")
+        final_submission.to_csv('method03/submission.csv', index=False)
+        print("method03/submission.csv 파일이 성공적으로 생성되었습니다.")
     else:
         print("예측이 생성되지 않았습니다.")
 
