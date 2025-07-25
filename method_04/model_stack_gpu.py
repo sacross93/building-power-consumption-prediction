@@ -117,6 +117,28 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
     # 디버그: 학습/검증 데이터 크기 로그
     print(f"    ▶️ Train rows: {len(y_tr)}, Val rows: {len(y_val)}")
     
+    # 디버그: 학습 데이터 샘플 확인
+    print("    📊 Train 데이터 샘플:")
+    sample_idx = np.random.choice(len(y_tr), 3, replace=False)
+    for i, idx in enumerate(sample_idx):
+        sample_features = X_tr.iloc[idx]
+        target_val = y_tr.iloc[idx]
+        print(f"       샘플{i+1}: 건물번호={sample_features.get('건물번호', 'N/A')}, "
+              f"기온={sample_features.get('기온(°C)', 'N/A'):.1f}°C, "
+              f"hour={sample_features.get('hour', 'N/A')}, "
+              f"log_power={target_val:.3f}")
+    
+    print("    📊 Val 데이터 샘플:")
+    val_sample_idx = np.random.choice(len(y_val), 2, replace=False)
+    for i, idx in enumerate(val_sample_idx):
+        sample_features = X_val.iloc[idx]
+        target_val = y_val.iloc[idx]
+        print(f"       Val샘플{i+1}: 건물번호={sample_features.get('건물번호', 'N/A')}, "
+              f"기온={sample_features.get('기온(°C)', 'N/A'):.1f}°C, "
+              f"hour={sample_features.get('hour', 'N/A')}, "
+              f"log_power={target_val:.3f}")
+    print()
+    
     # 1. LightGBM - 일단 CPU로 강제 설정 (GPU 학습 문제 때문)
     print("  🚀 LightGBM 학습...")
     try:
