@@ -1,0 +1,30 @@
+Building Type Analysis
+==============================
+
+Distribution:
+building_type
+Department Store      16
+Hotel                 10
+Commercial            10
+School                10
+Other Buildings       10
+Hospital               9
+Apartment              9
+Research Institute     9
+IDC (Telecom)          9
+Public                 8
+Name: count, dtype: int64
+
+Power Consumption Statistics by Building Type:
+                        mean    median      std
+building_type                                  
+Apartment            1106.31   1046.40   852.72
+Commercial           2513.70   2354.79  1443.93
+Department Store     2729.74   1723.71  3025.16
+Hospital             4454.06   2916.30  4919.20
+Hotel                3175.02   1915.56  2886.33
+IDC (Telecom)       10316.94  10563.84  4677.50
+Other Buildings      2285.96   1451.76  2208.45
+Public               1625.91   1575.96   766.49
+Research Institute   2111.67   1869.48   942.58
+School               3462.68   2869.36  2685.51

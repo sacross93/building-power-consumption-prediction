@@ -1,0 +1,22 @@
+Weather and Power Consumption Correlation Analysis
+==================================================
+
+Correlation Matrix:
+                   temperature  precipitation  windspeed  humidity  sunshine  solar_radiation  power_consumption
+temperature           1.000000      -0.079778   0.277756 -0.434364  0.442492         0.482076           0.124400
+precipitation        -0.079778       1.000000   0.054976  0.173126 -0.101001        -0.087888           0.009452
+windspeed             0.277756       0.054976   1.000000 -0.208548  0.210888         0.303323           0.022214
+humidity             -0.434364       0.173126  -0.208548  1.000000 -0.641668        -0.590197          -0.082530
+sunshine              0.442492      -0.101001   0.210888 -0.641668  1.000000         0.766460           0.065969
+solar_radiation       0.482076      -0.087888   0.303323 -0.590197  0.766460         1.000000           0.109885
+power_consumption     0.124400       0.009452   0.022214 -0.082530  0.065969         0.109885           1.000000
+
+Power Consumption Correlations (sorted):
+power_consumption    1.000000
+temperature          0.124400
+solar_radiation      0.109885
+sunshine             0.065969
+windspeed            0.022214
+precipitation        0.009452
+humidity            -0.082530
+Name: power_consumption, dtype: float64

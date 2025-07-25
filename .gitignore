@@ -91,7 +91,7 @@ ipython_config.py
 #   install all needed dependencies.
 #Pipfile.lock
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
+# PEP 582; used by e.com/David-OConnor/pyflow
 __pypackages__/
 
 # Celery stuff
@@ -148,4 +148,15 @@ dmypy.json
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Generated data and results
+/preprocessed_data_gemini/
+/modeling_results/
+/result_gemini/
+/preprocessing_results/
+/txt_results/
+/visualization_results/
+*.png
+*.txt
+*.json

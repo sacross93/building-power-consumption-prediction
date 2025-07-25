@@ -1,0 +1,88 @@
+Advanced Time Series Analysis Results
+========================================
+
+SEASONALITY ANALYSIS
+--------------------
+Monthly Power Consumption Statistics:
+          mean      std   median
+month                           
+6      3024.21  3447.93  1713.09
+7      3387.11  3726.91  1970.94
+8      3636.97  3896.67  2173.20
+
+Seasonal Power Consumption Statistics:
+           mean     std   median
+season                          
+Summer  3329.58  3689.1  1935.72
+
+BUILDING-SPECIFIC TEMPORAL PATTERNS
+-----------------------------------
+
+Hotel:
+  Peak hour: 16:00
+  Peak consumption: 3765.33 kWh
+  Daily variability: 108.00
+  Hourly variability: 454.70
+
+Commercial:
+  Peak hour: 14:00
+  Peak consumption: 2834.96 kWh
+  Daily variability: 168.05
+  Hourly variability: 273.92
+
+Hospital:
+  Peak hour: 11:00
+  Peak consumption: 5363.62 kWh
+  Daily variability: 410.13
+  Hourly variability: 746.24
+
+School:
+  Peak hour: 15:00
+  Peak consumption: 4180.37 kWh
+  Daily variability: 332.96
+  Hourly variability: 508.58
+
+Other Buildings:
+  Peak hour: 15:00
+  Peak consumption: 2878.00 kWh
+  Daily variability: 86.55
+  Hourly variability: 485.03
+
+Apartment:
+  Peak hour: 20:00
+  Peak consumption: 1549.37 kWh
+  Daily variability: 29.09
+  Hourly variability: 264.94
+
+Research Institute:
+  Peak hour: 15:00
+  Peak consumption: 2552.43 kWh
+  Daily variability: 344.23
+  Hourly variability: 317.30
+
+Department Store:
+  Peak hour: 13:00
+  Peak consumption: 4436.49 kWh
+  Daily variability: 105.44
+  Hourly variability: 1463.37
+
+IDC (Telecom):
+  Peak hour: 23:00
+  Peak consumption: 10559.84 kWh
+  Daily variability: 113.87
+  Hourly variability: 118.34
+
+Public:
+  Peak hour: 14:00
+  Peak consumption: 2003.69 kWh
+  Daily variability: 206.45
+  Hourly variability: 300.83
+
+WEATHER LAG EFFECTS
+--------------------
+Temperature:
+  Best correlation: 0.1244 at lag 0 hours
+Humidity:
+  Best correlation: -0.0839 at lag 23 hours
+Solar Radiation:
+  Best correlation: 0.1150 at lag 1 hours

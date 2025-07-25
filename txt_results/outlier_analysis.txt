@@ -1,0 +1,23 @@
+Outlier Analysis Report
+=========================
+
+IQR Method Results:
+Q1: 1176.12 kWh
+Q3: 3726.76 kWh
+IQR: 2550.64 kWh
+Lower Bound: -2649.85 kWh
+Upper Bound: 7552.73 kWh
+
+Number of outliers: 24,466
+Percentage of total data: 11.99%
+
+Outlier Statistics:
+count    24466.000000
+mean     11975.885587
+std       3477.157536
+min       7552.800000
+25%       9503.340000
+50%      10865.970000
+75%      13987.050000
+max      27155.940000
+Name: power_consumption, dtype: float64

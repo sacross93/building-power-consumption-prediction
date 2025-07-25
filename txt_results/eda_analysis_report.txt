@@ -1,0 +1,329 @@
+============================================================
+2025 Power Consumption Prediction AI Competition
+Exploratory Data Analysis (EDA)
+============================================================
+
+1. Data Loading
+----------------------------------------
+Train data shape: (204000, 10)
+Building info data shape: (100, 7)
+
+2. Basic Data Information
+----------------------------------------
+
+[Train Data Info]
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 204000 entries, 0 to 203999
+Data columns (total 10 columns):
+ #   Column             Non-Null Count   Dtype  
+---  ------             --------------   -----  
+ 0   num_date_time      204000 non-null  object 
+ 1   building_number    204000 non-null  int64  
+ 2   datetime           204000 non-null  object 
+ 3   temperature        204000 non-null  float64
+ 4   precipitation      204000 non-null  float64
+ 5   windspeed          204000 non-null  float64
+ 6   humidity           204000 non-null  float64
+ 7   sunshine           204000 non-null  float64
+ 8   solar_radiation    204000 non-null  float64
+ 9   power_consumption  204000 non-null  float64
+dtypes: float64(7), int64(1), object(2)
+memory usage: 15.6+ MB
+
+
+[Train Data Statistics]
+       building_number    temperature  precipitation      windspeed       humidity       sunshine  solar_radiation  power_consumption
+count    204000.000000  204000.000000  204000.000000  204000.000000  204000.000000  204000.000000    204000.000000      204000.000000
+mean         50.500000      26.098130       0.304185       1.967977      75.206706       0.277459         0.702752        3329.575857
+std          28.866141       4.052888       2.052947       1.316102      16.378490       0.396476         1.017394        3689.102792
+min           1.000000       8.400000       0.000000       0.000000       0.000000       0.000000         0.000000           0.000000
+25%          25.750000      23.500000       0.000000       1.000000      64.000000       0.000000         0.000000        1176.120000
+50%          50.500000      26.300000       0.000000       1.800000      78.000000       0.000000         0.050000        1935.720000
+75%          75.250000      28.800000       0.000000       2.700000      88.000000       0.600000         1.230000        3726.765000
+max         100.000000      38.700000     100.900000      15.200000     100.000000       1.000000         3.950000       27155.940000
+
+[Building Info Data Info]
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 100 entries, 0 to 99
+Data columns (total 7 columns):
+ #   Column           Non-Null Count  Dtype  
+---  ------           --------------  -----  
+ 0   building_number  100 non-null    int64  
+ 1   building_type    100 non-null    object 
+ 2   total_area       100 non-null    float64
+ 3   cooling_area     100 non-null    float64
+ 4   solar_capacity   100 non-null    object 
+ 5   ess_capacity     100 non-null    object 
+ 6   pcs_capacity     100 non-null    object 
+dtypes: float64(2), int64(1), object(4)
+memory usage: 5.6+ KB
+
+
+[Building Info Statistics]
+       building_number    total_area  cooling_area
+count       100.000000  1.000000e+02  1.000000e+02
+mean         50.500000  1.857529e+05  1.091272e+05
+std          29.011492  3.390836e+05  2.077200e+05
+min           1.000000  1.003542e+04  3.378400e+02
+25%          25.750000  5.698032e+04  2.595468e+04
+50%          50.500000  1.049387e+05  6.433699e+04
+75%          75.250000  2.027810e+05  1.243468e+05
+max         100.000000  3.260213e+06  1.956128e+06
+
+3. Missing Values Analysis
+----------------------------------------
+
+[Train Data Missing Values]
+No missing values found in train data
+
+[Building Info Missing Values]
+No missing values found in building info data
+
+4. Building Information Analysis
+----------------------------------------
+
+[Building Type Distribution]
+building_type
+Department Store      16
+Hotel                 10
+Commercial            10
+School                10
+Other Buildings       10
+Hospital               9
+Apartment              9
+Research Institute     9
+IDC (Telecom)          9
+Public                 8
+Name: count, dtype: int64
+
+5. Time Data Analysis
+----------------------------------------
+Time-related columns added successfully
+Data period: 2024-06-01 00:00:00 ~ 2024-08-24 23:00:00
+
+6. Power Consumption Analysis
+----------------------------------------
+Power Consumption Statistics:
+Mean: 3329.58 kWh
+Median: 1935.72 kWh
+Min: 0.00 kWh
+Max: 27155.94 kWh
+Std: 3689.10 kWh
+
+7. Building-wise Power Consumption Analysis
+----------------------------------------
+
+Power Consumption Statistics by Building Type:
+                        mean    median      std
+building_type                                  
+Apartment            1106.31   1046.40   852.72
+Commercial           2513.70   2354.79  1443.93
+Department Store     2729.74   1723.71  3025.16
+Hospital             4454.06   2916.30  4919.20
+Hotel                3175.02   1915.56  2886.33
+IDC (Telecom)       10316.94  10563.84  4677.50
+Other Buildings      2285.96   1451.76  2208.45
+Public               1625.91   1575.96   766.49
+Research Institute   2111.67   1869.48   942.58
+School               3462.68   2869.36  2685.51
+
+8. Weather Data Correlation Analysis
+----------------------------------------
+Correlation between power consumption and weather variables:
+power_consumption    1.000000
+temperature          0.124400
+solar_radiation      0.109885
+sunshine             0.065969
+windspeed            0.022214
+precipitation        0.009452
+humidity            -0.082530
+Name: power_consumption, dtype: float64
+
+9. Time Series Pattern Analysis
+----------------------------------------
+Daily power consumption trend calculated for visualization
+
+10. Outlier Analysis
+----------------------------------------
+Number of outliers: 24466
+Percentage of total data: 11.99%
+
+Outlier statistics:
+count    24466.000000
+mean     11975.885587
+std       3477.157536
+min       7552.800000
+25%       9503.340000
+50%      10865.970000
+75%      13987.050000
+max      27155.940000
+Name: power_consumption, dtype: float64
+
+11. Advanced Time Series Analysis
+----------------------------------------
+
+11.1 Seasonality Analysis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Monthly Power Consumption Statistics:
+          mean      std   median
+month                           
+6      3024.21  3447.93  1713.09
+7      3387.11  3726.91  1970.94
+8      3636.97  3896.67  2173.20
+
+Seasonal Power Consumption Statistics:
+           mean     std   median
+season                          
+Summer  3329.58  3689.1  1935.72
+
+11.2 Time Series Decomposition
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Time series decomposition completed successfully
+Trend component range: 6758578.94 to 8803311.45
+Seasonal component range: -535370.22 to 237417.79
+
+11.3 Autocorrelation Analysis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Autocorrelation analysis completed
+ACF and PACF plots show time dependencies in power consumption
+
+11.4 Stationarity Analysis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Augmented Dickey-Fuller Test Results:
+ADF Statistic: -1.811058
+p-value: 0.374986
+Critical Values:
+	1%: -3.437
+	5%: -2.865
+	10%: -2.568
+Result: Time series is non-stationary (fail to reject null hypothesis)
+
+11.5 Building-Specific Time Series Patterns
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Hotel:
+  Peak hour: 16:00
+  Peak consumption: 3765.33 kWh
+  Daily variability: 108.00
+  Hourly variability: 454.70
+
+Commercial:
+  Peak hour: 14:00
+  Peak consumption: 2834.96 kWh
+  Daily variability: 168.05
+  Hourly variability: 273.92
+
+Hospital:
+  Peak hour: 11:00
+  Peak consumption: 5363.62 kWh
+  Daily variability: 410.13
+  Hourly variability: 746.24
+
+School:
+  Peak hour: 15:00
+  Peak consumption: 4180.37 kWh
+  Daily variability: 332.96
+  Hourly variability: 508.58
+
+Other Buildings:
+  Peak hour: 15:00
+  Peak consumption: 2878.00 kWh
+  Daily variability: 86.55
+  Hourly variability: 485.03
+
+Apartment:
+  Peak hour: 20:00
+  Peak consumption: 1549.37 kWh
+  Daily variability: 29.09
+  Hourly variability: 264.94
+
+Research Institute:
+  Peak hour: 15:00
+  Peak consumption: 2552.43 kWh
+  Daily variability: 344.23
+  Hourly variability: 317.30
+
+Department Store:
+  Peak hour: 13:00
+  Peak consumption: 4436.49 kWh
+  Daily variability: 105.44
+  Hourly variability: 1463.37
+
+IDC (Telecom):
+  Peak hour: 23:00
+  Peak consumption: 10559.84 kWh
+  Daily variability: 113.87
+  Hourly variability: 118.34
+
+Public:
+  Peak hour: 14:00
+  Peak consumption: 2003.69 kWh
+  Daily variability: 206.45
+  Hourly variability: 300.83
+
+11.6 Weather Lag Effects Analysis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Temperature:
+  Best correlation: 0.1244 at lag 0 hours
+
+Humidity:
+  Best correlation: -0.0839 at lag 23 hours
+
+Solar Radiation:
+  Best correlation: 0.1150 at lag 1 hours
+
+============================================================
+AI Model Development Strategy for Power Consumption Prediction
+============================================================
+
+1. Dataset Characteristics:
+   - Total records: 204,000
+   - Number of buildings: 100
+   - Time period: 84 days
+   - Data frequency: Hourly
+   - Building types: 10
+
+2. Key Findings:
+   - Clear hourly power consumption patterns (higher during daytime)
+   - Distinct consumption patterns across building types
+   - IDC buildings show highest consumption (avg. 10,317 kWh)
+   - Temperature shows strongest correlation with power consumption (0.124)
+   - Outlier ratio: 11.99%
+
+3. Feature Engineering Strategy:
+   - Time-based features: hour, day of week, month, season
+   - Lag features: previous hour/day weather and consumption data
+   - Rolling statistics: moving averages, trends
+   - Building characteristics: area ratios, building type encoding
+   - Weather interactions: temperature × humidity, etc.
+
+4. Modeling Approach:
+   - Time series models: LSTM, GRU for temporal patterns
+   - Tree-based models: XGBoost, LightGBM, CatBoost
+   - Individual vs. unified model: building-specific or global model
+   - Ensemble methods: combining multiple model predictions
+   - Cross-validation: time series split respecting temporal order
+
+5. Data Preprocessing:
+   - Handle outliers: cap/remove extreme values
+   - Feature scaling: standardization for neural networks
+   - Missing value imputation: if any in test data
+   - Building type encoding: label/one-hot encoding
+
+6. Model Evaluation:
+   - Time-based train/validation split
+   - Building-wise performance analysis
+   - Seasonal and hourly performance evaluation
+   - Competition metric optimization
+
+7. Competition Strategy:
+   - Baseline model: Simple time series models
+   - Advanced models: Deep learning + ensemble
+   - Feature importance analysis
+   - Model interpretability for business insights
+
+Analysis completed! Visualization results saved in 'visualization_results' folder.
+Text analysis results saved in 'txt_results' folder.
+Ready for AI model development for the 2025 Power Consumption Prediction Competition!

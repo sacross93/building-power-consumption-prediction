@@ -1,0 +1,43 @@
+Time Series Analysis Insights
+===================================
+
+Data Period: 2024-06-01 00:00:00 to 2024-08-24 23:00:00
+Total Days: 84
+Data Frequency: Hourly
+
+Hourly Power Consumption Pattern:
+hour
+0     2849.762576
+1     2774.322140
+2     2719.511346
+3     2680.842655
+4     2654.102702
+5     2662.018008
+6     2764.066234
+7     2950.034984
+8     3164.467151
+9     3491.010189
+10    3818.715674
+11    3899.723016
+12    3912.607069
+13    3946.149716
+14    3963.308251
+15    3974.968867
+16    3956.181640
+17    3901.863020
+18    3741.598178
+19    3599.263378
+20    3406.713298
+21    3138.923612
+22    3001.850433
+23    2937.816431
+Name: power_consumption, dtype: float64
+
+Daily Average Power Consumption (by weekday):
+Monday: 3362.28 kWh
+Tuesday: 3416.34 kWh
+Wednesday: 3436.99 kWh
+Thursday: 3408.96 kWh
+Friday: 3427.05 kWh
+Saturday: 3181.03 kWh
+Sunday: 3086.76 kWh
