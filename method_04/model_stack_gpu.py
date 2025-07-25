@@ -83,6 +83,18 @@ def check_gpu_availability():
     return gpu_info
 
 ############################################################
+# Helper: 카테고리형 컬럼을 XGBoost 입력용으로 int 코드 변환
+############################################################
+
+def encode_categories(df: pd.DataFrame, cat_cols: List[str]) -> pd.DataFrame:
+    """category dtype -> int 코드, NaN은 -1"""
+    df_enc = df.copy()
+    for c in cat_cols:
+        if str(df_enc[c].dtype) == "category":
+            df_enc[c] = df_enc[c].cat.codes.astype("int32").fillna(-1)
+    return df_enc
+
+############################################################
 # 평가 지표 – SMAPE (competition metric)
 ############################################################
 
