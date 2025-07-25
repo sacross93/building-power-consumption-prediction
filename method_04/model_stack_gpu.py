@@ -382,7 +382,8 @@ def main(train_path: str, test_path: str, submission_path: str):
     enet = ElasticNetCV(l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9], cv=5, random_state=SEED)
     enet.fit(oof_preds, y)
     oof_meta = enet.predict(oof_preds)
-    score_meta = smape_np(np.expm1(y), np.expm1(oof_meta))
+    # SMAPE를 log 공간에서 계산 (원래 공간 변환시 스케일 문제)
+    score_meta = smape_np(y, oof_meta)
     print(f"✅ Meta SMAPE: {score_meta:.3f}%")
 
     # Test meta predictions
