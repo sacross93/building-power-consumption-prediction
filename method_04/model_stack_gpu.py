@@ -46,6 +46,8 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features: List[str]):
         "n_estimators": 8000,
         "device": "gpu",
         "gpu_use_dp": True,
+        "gpu_platform_id": 0,
+        "gpu_device_id": 0,
         "max_bin": 255,
         "verbose": -1,
     }
@@ -118,12 +120,21 @@ def main(train_path: Path, test_path: Path, out_path: Path):
     test_df = pd.read_parquet(test_path)
 
     # 타겟 & 피처 분리
-    target_col = "log_power"
+    # 전처리에서 생성한 로그 변환 타겟 컬럼명 확인
+    if "log_power" in train_df.columns:
+        target_col = "log_power"
+    elif "log_전력소비량(kWh)" in train_df.columns:
+        target_col = "log_전력소비량(kWh)"
+    else:
+        raise ValueError("로그 변환된 타겟 컬럼을 찾을 수 없습니다. 전처리를 확인하세요.")
     drop_cols = ["전력소비량(kWh)", "일시", "num_date_time"]  # 원본 타겟·시간·ID 열 제외
     feature_cols = [c for c in train_df.columns if c not in drop_cols + [target_col]]
 
     # 카테고리 피처 자동 감지 (dtype == 'category')
     categorical_cols = [c for c in feature_cols if str(train_df[c].dtype) == "category"]
+    # 건물번호는 필수 범주형 피처로 추가 (전처리에서 category로 설정)
+    if "건물번호" in feature_cols and "건물번호" not in categorical_cols:
+        categorical_cols.append("건물번호")
     print(f"Categorical features: {categorical_cols}")
 
     X = train_df[feature_cols]
@@ -168,7 +179,13 @@ def main(train_path: Path, test_path: Path, out_path: Path):
 
     # Test meta predictions
     test_meta = enet.predict(test_preds)
-    final_pred_kwh = np.expm1(test_meta) * test_df["연면적(m2)"]
+    # log_power = log(power_per_area) 이므로 면적을 곱해야 함
+    # 면적도 로그 변환되었으면 그것을 사용, 없으면 원본 사용
+    if "log_연면적(m2)" in test_df.columns:
+        area_col = np.expm1(test_df["log_연면적(m2)"])
+    else:
+        area_col = test_df["연면적(m2)"]
+    final_pred_kwh = np.expm1(test_meta) * area_col
 
     # 제출 파일 생성
     submission = pd.DataFrame({
