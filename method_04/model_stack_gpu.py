@@ -113,7 +113,7 @@ def main(train_path: Path, test_path: Path, out_path: Path):
 
     # 타겟 & 피처 분리
     target_col = "log_power"
-    drop_cols = ["전력소비량(kWh)", "일시"]  # 원본 타겟·시간 열 제외
+    drop_cols = ["전력소비량(kWh)", "일시", "num_date_time"]  # 원본 타겟·시간·ID 열 제외
     feature_cols = [c for c in train_df.columns if c not in drop_cols + [target_col]]
 
     # 카테고리 피처 자동 감지 (dtype == 'category')
