@@ -33,6 +33,29 @@ def check_gpu_availability():
         "gpu_available": False
     }
     
+    # CUDA 체크 (nvidia-ml-py 대신 직접 체크)
+    cuda_available = False
+    try:
+        # CUDA 라이브러리 경로 체크
+        cuda_paths = ["/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu"]
+        for path in cuda_paths:
+            if os.path.exists(f"{path}/libcuda.so") or os.path.exists(f"{path}/libcuda.so.1"):
+                cuda_available = True
+                break
+        
+        if cuda_available:
+            print("🎯 CUDA 라이브러리 발견")
+            gpu_info["xgb_tree_method"] = "gpu_hist"
+            gpu_info["catboost_task_type"] = "GPU"
+            gpu_info["gpu_available"] = True
+            
+            # LightGBM은 OpenCL 백엔드로 시도 (CUDA 빌드 문제 회피)
+            gpu_info["lightgbm_device"] = "gpu"  # OpenCL 백엔드 우선 시도
+        else:
+            print("⚠️ CUDA 라이브러리 없음")
+    except Exception as e:
+        print(f"⚠️ CUDA 체크 실패: {e}")
+    
     # OpenCL 체크
     try:
         import pyopencl as cl
@@ -56,29 +79,6 @@ def check_gpu_availability():
         print("⚠️ pyopencl 없음 - OpenCL GPU 사용 불가")
     except Exception as e:
         print(f"⚠️ OpenCL 체크 실패: {e}")
-    
-    # CUDA 체크 (nvidia-ml-py 대신 직접 체크)
-    cuda_available = False
-    try:
-        # CUDA 라이브러리 경로 체크
-        cuda_paths = ["/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu"]
-        for path in cuda_paths:
-            if os.path.exists(f"{path}/libcuda.so") or os.path.exists(f"{path}/libcuda.so.1"):
-                cuda_available = True
-                break
-        
-        if cuda_available:
-            print("🎯 CUDA 라이브러리 발견")
-            gpu_info["xgb_tree_method"] = "gpu_hist"
-            gpu_info["catboost_task_type"] = "GPU"
-            gpu_info["gpu_available"] = True
-            
-            # LightGBM CUDA 옵션도 시도해보기
-            gpu_info["lightgbm_device"] = "cuda"  # CUDA 백엔드 우선 시도
-        else:
-            print("⚠️ CUDA 라이브러리 없음")
-    except Exception as e:
-        print(f"⚠️ CUDA 체크 실패: {e}")
     
     return gpu_info
 
