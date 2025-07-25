@@ -20,8 +20,7 @@ def smape_np(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return np.mean(2 * np.abs(y_pred - y_true) / (np.abs(y_true) + np.abs(y_pred) + eps)) * 100
 
 
-def lgb_smape(y_pred: np.ndarray, data: lgb.Dataset):
-    y_true = data.get_label()
+def lgb_smape(y_true: np.ndarray, y_pred: np.ndarray):
     return "SMAPE", smape_np(y_true, y_pred), False
 
 
@@ -87,7 +86,6 @@ def train_per_type(train_df: pd.DataFrame, test_df: pd.DataFrame, features: list
         random_state=SEED,
         learning_rate=0.03,
         num_leaves=64,
-        n_estimators=6000,
         subsample=0.8,
         colsample_bytree=0.8,
         reg_alpha=0.2,
@@ -123,7 +121,9 @@ def train_per_type(train_df: pd.DataFrame, test_df: pd.DataFrame, features: list
         print(f"  OOF SMAPE: {sm:.4f}%")
 
         best_iters = int(model.best_iteration_ * 1.1)
-        final_model = lgb.LGBMRegressor(**params, n_estimators=best_iters)
+        final_params = params.copy()
+        final_params['n_estimators'] = best_iters
+        final_model = lgb.LGBMRegressor(**final_params)
         final_model.fit(X, y, categorical_feature=cat_cols)
 
         test_part = test_df[test_df["건물유형"] == btype]

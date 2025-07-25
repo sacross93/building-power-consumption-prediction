@@ -415,7 +415,50 @@ def train_building(df_tr: pd.DataFrame, df_te: pd.DataFrame, feats: list, n_tria
             "num_date_time": df_te["num_date_time"],
             "answer": pred_kwh.clip(min=0)
         })
+        print(f"    📤 Generated {len(preds_df)} predictions for building")
+    else:
+        print(f"    ⚠️ No test data for this building - skipping predictions")
     return sm, preds_df
+
+###########################################################
+# Submission Update Helper
+###########################################################
+
+def update_submission_csv(preds_df, sample_path):
+    """각 건물 예측 완료 시마다 submission.csv 업데이트"""
+    submission_path = "submission.csv"
+    
+    # 기존 submission.csv가 있는지 확인
+    if os.path.exists(submission_path):
+        # 기존 파일 로드
+        submission = pd.read_csv(submission_path)
+        print(f"    📄 Loading existing submission.csv ({len(submission)} rows)")
+    else:
+        # sample_submission.csv 기반으로 새로 생성
+        if sample_path.exists():
+            submission = pd.read_csv(sample_path)
+            print(f"    📄 Creating new submission.csv from sample ({len(submission)} rows)")
+        else:
+            print("    ❌ No sample_submission.csv found!")
+            return False
+    
+    # 현재 건물의 예측값으로 업데이트
+    for _, row in preds_df.iterrows():
+        num_date_time = row['num_date_time']
+        answer = row['answer']
+        
+        # 해당 num_date_time의 인덱스 찾기
+        mask = submission['num_date_time'] == num_date_time
+        if mask.any():
+            submission.loc[mask, 'answer'] = answer
+    
+    # 업데이트된 submission.csv 저장
+    submission.to_csv(submission_path, index=False)
+    updated_count = len(preds_df)
+    total_predictions = submission['answer'].notna().sum()
+    print(f"    💾 Updated submission.csv: +{updated_count} predictions (총 {total_predictions}개 완료)")
+    
+    return True
 
 ###########################################################
 # Main Pipeline
@@ -472,48 +515,53 @@ def run_pipeline(train_path: Path, test_path: Path, info_path: Path, n_trials: i
     print("🔧 Creating num_date_time column...")
     df_test['num_date_time'] = df_test['건물번호'].astype(str) + '_' + df_test['일시'].dt.strftime('%Y%m%d %H')
 
-    # train per building
+    # train per building - 각 건물마다 즉시 submission.csv 업데이트
     print("🏗️ Starting building-wise training ... (switching to GPU)")
-    sub_parts = []
     scores = []
+    total_buildings = len(df_train["건물번호"].unique())
+    processed_buildings = 0
+    sample_path = test_path.parent / "sample_submission.csv"
+    
+    # 초기 submission.csv 생성 (sample_submission 기반)
+    if sample_path.exists():
+        sample = pd.read_csv(sample_path)
+        sample.to_csv("submission.csv", index=False)
+        print(f"📋 Initialized submission.csv with {len(sample)} rows (all answers=0)")
+    
     for bid in df_train["건물번호"].unique():
-        print(f"\n🏢 Building {bid}")
+        processed_buildings += 1
+        print(f"\n🏢 Building {bid} ({processed_buildings}/{total_buildings})")
         tr_b = df_train[df_train["건물번호"] == bid].copy()
         te_b = df_test[df_test["건물번호"] == bid].copy()
         if len(tr_b) < 200:
             print(f"  ⚠️ Skipping Building {bid} - insufficient data ({len(tr_b)} < 200)")
             continue
+        
         sm, preds = train_building(tr_b, te_b, feats, n_trials, use_gpu, lgb_gpu, xgb_gpu)
         scores.append(sm)
+        
         if preds is not None:
-            sub_parts.append(preds)
-            print(f"  ✅ Building {bid} predictions added ({len(preds)} rows)")
+            # 각 건물 완료 시마다 바로 submission.csv 업데이트
+            if update_submission_csv(preds, sample_path):
+                print(f"  ✅ Building {bid} predictions updated to submission.csv ({len(preds)} rows)")
+            else:
+                print(f"  ❌ Failed to update submission.csv for Building {bid}")
+        else:
+            print(f"  ⚠️ Building {bid} - no test data, skipping predictions")
 
     print(f"\n📈 Average OOF SMAPE: {np.mean(scores):.3f}%")
+    print(f"📊 Processed {len(scores)} buildings with valid training data")
     
-    if sub_parts:
-        print(f"🔗 Concatenating {len(sub_parts)} building predictions...")
-        submission = pd.concat(sub_parts, ignore_index=True)
-        print(f"   Combined predictions shape: {submission.shape}")
-        
-        # align with sample_submission if exists
-        sample_path = test_path.parent / "sample_submission.csv"
-        if sample_path.exists():
-            print("📋 Aligning with sample_submission.csv...")
-            sample = pd.read_csv(sample_path).drop(columns=["answer"], errors="ignore")
-            submission = sample.merge(submission, on="num_date_time", how="left")
-            print(f"   Final submission shape: {submission.shape}")
-        
-        submission.to_csv("submission.csv", index=False)
-        print("✅ submission.csv saved.")
+    # 최종 확인
+    if os.path.exists("submission.csv"):
+        final_submission = pd.read_csv("submission.csv")
+        completed_predictions = final_submission['answer'].notna().sum()
+        total_predictions = len(final_submission)
+        completion_rate = (completed_predictions / total_predictions) * 100
+        print(f"🎯 Final submission.csv: {completed_predictions}/{total_predictions} predictions ({completion_rate:.1f}% complete)")
+        print("✅ submission.csv 최종 저장 완료!")
     else:
-        print("❌ No predictions generated! Check building data or training process.")
-        # 기본 제출 파일 생성
-        sample_path = test_path.parent / "sample_submission.csv"
-        if sample_path.exists():
-            sample = pd.read_csv(sample_path)
-            sample.to_csv("submission.csv", index=False)
-            print("📝 Default submission.csv created from sample.")
+        print("❌ submission.csv not found!")
 
 ###########################################################
 if __name__ == "__main__":

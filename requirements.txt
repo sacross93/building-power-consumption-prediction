@@ -10,8 +10,11 @@ scipy>=1.9.0
 optuna>=3.0.0
 xgboost>=1.7.0
 catboost>=1.2.0
+plotly>=5.0.0
+joblib>=1.1.0
 
 # GPU 지원 패키지 (선택사항)
 # torch>=2.0.0  # CUDA 감지용
 # lightgbm[gpu]  # LightGBM GPU 버전 (별도 설치 필요)
-# 주의: GPU 버전 설치는 CUDA/OpenCL 환경에 따라 다름 
+# 주의: GPU 버전 설치는 CUDA/OpenCL 환경에 따라 다름
+
