@@ -362,7 +362,7 @@ def main(train_path: str, test_path: str, submission_path: str):
 
     # Meta model (ElasticNet)
     print("\n🔗 스태킹 메타 모델 학습 (ElasticNetCV)...")
-    enet = ElasticNetCV(l1_ratio=[0.0, 0.5, 1.0], cv=3, random_state=SEED)
+    enet = ElasticNetCV(l1_ratio=[0.01, 0.5, 1.0], cv=3, random_state=SEED)
     enet.fit(oof_preds, y)
     oof_meta = enet.predict(oof_preds)
     score_meta = smape_np(np.expm1(y), np.expm1(oof_meta))
