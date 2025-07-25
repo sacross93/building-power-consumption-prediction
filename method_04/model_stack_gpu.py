@@ -377,7 +377,7 @@ def main(train_path: str, test_path: str, submission_path: str):
     # 제출 파일 생성
     submission = pd.DataFrame({
         "num_date_time": test_df["num_date_time"],
-        "answer": final_pred_kwh.clip(lower=0)
+        "answer": np.clip(final_pred_kwh, 0, None)
     })
     submission.to_csv(submission_path, index=False)
     print(f"🎉 Submission saved to {submission_path}")
