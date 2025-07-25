@@ -152,7 +152,7 @@ def main():
             'objective': 'regression_l1',
             'metric': 'mae',
             'random_state': 42,
-            'device': 'gpu',
+            'device': 'cpu',
             'n_estimators': 2000,
             'learning_rate': 0.02,
             'num_leaves': 32,
