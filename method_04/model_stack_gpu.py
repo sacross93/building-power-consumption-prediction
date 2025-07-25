@@ -328,6 +328,7 @@ def main(train_path: str, test_path: str, submission_path: str):
     tscv = TimeSeriesSplit(n_splits=5, test_size=None)
     oof_preds = np.zeros((len(y), 3))  # LGB, XGB, Cat 예측값
     test_preds = np.zeros((len(test_df), 3))
+    base_models_per_fold = []  # 각 fold의 모델들을 저장
     
     n_splits = 5
     for fold, (tr_idx, val_idx) in enumerate(tscv.split(X)):
