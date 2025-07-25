@@ -130,20 +130,20 @@ def main():
                 learning_rate=0.05, n_estimators=5000, max_depth=10,
                 subsample=0.7, colsample_bytree=0.7, min_child_weight=3,
                 random_state=RANDOM_SEED, objective=weighted_mse(alpha=3),
-                tree_method="gpu_hist", gpu_id=0, n_jobs=-1
+                tree_method="gpu_hist", gpu_id=0, n_jobs=-1,
+                eval_metric=custom_smape_metric
             )
 
             model.fit(
                 X_train, y_train,
                 eval_set=[(X_val, y_val)],
-                eval_metric=custom_smape_metric,
                 callbacks=[xgb.callback.EarlyStopping(rounds=100, save_best=True)],
                 verbose=False
             )
             
             val_preds = model.predict(X_val)
-            oof_preds[train_b_type_idx[val_idx]] = np.expm1(val_preds)
-            test_preds[test_b_type_idx] += np.expm1(model.predict(X_test)) / KFOLD_SPLITS
+            oof_preds[X_val.index] = np.expm1(val_preds)
+            test_preds[X_test.index] += np.expm1(model.predict(X_test)) / KFOLD_SPLITS
 
     total_smape = smape(train[target], oof_preds)
     print(f"\n--- 최종 OOF SMAPE: {total_smape:.4f} ---")
