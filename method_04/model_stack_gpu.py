@@ -114,13 +114,15 @@ def smape_np(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
     models = {}
     predictions = {}
+    # 디버그: 학습/검증 데이터 크기 로그
+    print(f"    ▶️ Train rows: {len(y_tr)}, Val rows: {len(y_val)}")
     
     # 1. LightGBM - 일단 CPU로 강제 설정 (GPU 학습 문제 때문)
     print("  🚀 LightGBM 학습...")
     try:
         lgb_params = {
-            "objective": "regression_l1",
-            "metric": "mae",
+            "objective": "regression",
+            "metric": "l1",
             "random_state": SEED,
             "learning_rate": 0.05,
             "num_leaves": 256,
@@ -144,13 +146,19 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
         models["lgb"] = lgb_model
         predictions["lgb"] = lgb_model.predict(X_val)
         print("    ✅ LightGBM 완료 (device: cpu)")
+        # 디버그: best iteration 및 예측 분산 확인
+        best_iter = getattr(lgb_model, "best_iteration_", lgb_model.n_estimators_)
+        pred_std = np.std(predictions["lgb"])
+        print(f"       ⮑ best_iter={best_iter}, val_pred_std={pred_std:.4f}")
+        if pred_std < 1e-6:
+            print("       ⚠️ LightGBM 예측이 상수에 가깝습니다!")
         
     except Exception as e:
         print(f"    ❌ LightGBM GPU 실패, CPU로 재시도: {e}")
         # CPU 백업
         lgb_params_cpu = {
-            "objective": "regression_l1",
-            "metric": "mae",
+            "objective": "regression",
+            "metric": "l1",
             "random_state": SEED,
             "learning_rate": 0.05,
             "num_leaves": 256,
@@ -207,6 +215,12 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
         models["xgb"] = xgb_model
         predictions["xgb"] = xgb_model.predict(X_val_enc)
         print(f"    ✅ XGBoost 완료 (method: {gpu_info['xgb_tree_method']})")
+        # 디버그: best iteration 및 예측 분산
+        best_iter_xgb = getattr(xgb_model, "best_iteration", None)
+        pred_std_xgb = np.std(predictions["xgb"])
+        print(f"       ⮑ best_iter={best_iter_xgb}, val_pred_std={pred_std_xgb:.4f}")
+        if pred_std_xgb < 1e-6:
+            print("       ⚠️ XGBoost 예측이 상수에 가깝습니다!")
         
     except Exception as e:
         print(f"    ❌ XGBoost GPU 실패, CPU로 재시도: {e}")
@@ -249,6 +263,12 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
         models["cat"] = cat_model
         predictions["cat"] = cat_model.predict(X_val)
         print(f"    ✅ CatBoost 완료 (task_type: {gpu_info['catboost_task_type']})")
+        # 디버그: best iteration 및 예측 분산
+        best_iter_cat = cat_model.get_best_iteration()
+        pred_std_cat = np.std(predictions["cat"])
+        print(f"       ⮑ best_iter={best_iter_cat}, val_pred_std={pred_std_cat:.4f}")
+        if pred_std_cat < 1e-6:
+            print("       ⚠️ CatBoost 예측이 상수에 가깝습니다!")
         
     except Exception as e:
         print(f"    ❌ CatBoost GPU 실패, CPU로 재시도: {e}")
