@@ -131,12 +131,14 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
             lgb_params.update({
                 "gpu_use_dp": True,
                 "gpu_platform_id": 0,
-                "gpu_device_id": 0,
+                "gpu_device_id": 1,  # GPU 1번 사용
                 "max_bin": 255,
+                "force_row_wise": False,  # GPU 최적화
+                "force_col_wise": False,
             })
         elif gpu_info["lightgbm_device"] == "cuda":
             lgb_params.update({
-                "gpu_device_id": 0,
+                "gpu_device_id": 1,  # GPU 1번 사용
                 "max_bin": 255,
             })
         
