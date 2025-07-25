@@ -3,6 +3,7 @@ from pathlib import Path
 import warnings
 import gc
 from typing import List
+import os
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,68 @@ warnings.filterwarnings("ignore")
 SEED = 42
 
 ############################################################
+# GPU 상태 확인 및 최적화 함수
+############################################################
+
+def check_gpu_availability():
+    """GPU 사용 가능 여부와 최적 설정을 확인"""
+    gpu_info = {
+        "lightgbm_device": "cpu",
+        "xgb_tree_method": "hist", 
+        "catboost_task_type": "CPU",
+        "gpu_available": False
+    }
+    
+    # OpenCL 체크
+    try:
+        import pyopencl as cl
+        platforms = cl.get_platforms()
+        if platforms:
+            devices = []
+            for platform in platforms:
+                try:
+                    platform_devices = platform.get_devices(cl.device_type.GPU)
+                    devices.extend(platform_devices)
+                except:
+                    pass
+            
+            if devices:
+                print(f"🎯 OpenCL GPU 발견: {len(devices)}개 디바이스")
+                gpu_info["lightgbm_device"] = "gpu"
+                gpu_info["gpu_available"] = True
+            else:
+                print("⚠️ OpenCL GPU 디바이스 없음")
+    except ImportError:
+        print("⚠️ pyopencl 없음 - OpenCL GPU 사용 불가")
+    except Exception as e:
+        print(f"⚠️ OpenCL 체크 실패: {e}")
+    
+    # CUDA 체크 (nvidia-ml-py 대신 직접 체크)
+    cuda_available = False
+    try:
+        # CUDA 라이브러리 경로 체크
+        cuda_paths = ["/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu"]
+        for path in cuda_paths:
+            if os.path.exists(f"{path}/libcuda.so") or os.path.exists(f"{path}/libcuda.so.1"):
+                cuda_available = True
+                break
+        
+        if cuda_available:
+            print("🎯 CUDA 라이브러리 발견")
+            gpu_info["xgb_tree_method"] = "gpu_hist"
+            gpu_info["catboost_task_type"] = "GPU"
+            gpu_info["gpu_available"] = True
+            
+            # LightGBM CUDA 옵션도 시도해보기
+            gpu_info["lightgbm_device"] = "cuda"  # CUDA 백엔드 우선 시도
+        else:
+            print("⚠️ CUDA 라이브러리 없음")
+    except Exception as e:
+        print(f"⚠️ CUDA 체크 실패: {e}")
+    
+    return gpu_info
+
+############################################################
 # 평가 지표 – SMAPE (competition metric)
 ############################################################
 
@@ -29,92 +92,184 @@ def smape_np(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return np.mean(2 * np.abs(y_pred - y_true) / (np.abs(y_true) + np.abs(y_pred) + eps)) * 100
 
 ############################################################
-# 학습 함수 (fold 단위)
+# 개선된 학습 함수
 ############################################################
 
-def train_fold(X_tr, y_tr, X_val, y_val, categorical_features: List[str]):
-    """각 모델을 학습하고 validation 예측 반환"""
+def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
+    models = {}
+    predictions = {}
+    
+    # 1. LightGBM with improved GPU settings
+    print("  🚀 LightGBM 학습...")
+    try:
+        lgb_params = {
+            "objective": "regression_l1",
+            "metric": "mae",
+            "random_state": SEED,
+            "learning_rate": 0.05,
+            "num_leaves": 256,
+            "max_depth": -1,
+            "n_estimators": 8000,
+            "device": gpu_info["lightgbm_device"],
+            "verbose": 1,  # GPU 사용 여부 확인을 위해 verbose 활성화
+        }
+        
+        # 디바이스별 추가 파라미터
+        if gpu_info["lightgbm_device"] == "gpu":
+            lgb_params.update({
+                "gpu_use_dp": True,
+                "gpu_platform_id": 0,
+                "gpu_device_id": 0,
+                "max_bin": 255,
+            })
+        elif gpu_info["lightgbm_device"] == "cuda":
+            lgb_params.update({
+                "gpu_device_id": 0,
+                "max_bin": 255,
+            })
+        
+        lgb_model = lgb.LGBMRegressor(**lgb_params)
+        lgb_model.fit(
+            X_tr,
+            y_tr,
+            eval_set=[(X_val, y_val)],
+            eval_metric="mae",
+            categorical_feature=categorical_features,
+            callbacks=[lgb.early_stopping(300, verbose=False)],
+        )
+        
+        models["lgb"] = lgb_model
+        predictions["lgb"] = lgb_model.predict(X_val)
+        print(f"    ✅ LightGBM 완료 (device: {gpu_info['lightgbm_device']})")
+        
+    except Exception as e:
+        print(f"    ❌ LightGBM GPU 실패, CPU로 재시도: {e}")
+        # CPU 백업
+        lgb_params["device"] = "cpu"
+        lgb_params.pop("gpu_use_dp", None)
+        lgb_params.pop("gpu_platform_id", None)
+        lgb_params.pop("gpu_device_id", None)
+        
+        lgb_model = lgb.LGBMRegressor(**lgb_params)
+        lgb_model.fit(
+            X_tr, y_tr,
+            eval_set=[(X_val, y_val)],
+            eval_metric="mae", 
+            categorical_feature=categorical_features,
+            callbacks=[lgb.early_stopping(300, verbose=False)],
+        )
+        models["lgb"] = lgb_model
+        predictions["lgb"] = lgb_model.predict(X_val)
+        print("    ✅ LightGBM CPU 완료")
 
-    ##### LightGBM #####
-    lgb_params = {
-        "objective": "regression_l1",
-        "metric": "mae",
-        "random_state": SEED,
-        "learning_rate": 0.05,
-        "num_leaves": 256,
-        "max_depth": -1,
-        "n_estimators": 8000,
-        "device": "gpu",
-        "gpu_use_dp": True,
-        "gpu_platform_id": 0,
-        "gpu_device_id": 0,
-        "max_bin": 255,
-        "verbose": -1,
-    }
-    lgb_model = lgb.LGBMRegressor(**lgb_params)
-    lgb_model.fit(
-        X_tr,
-        y_tr,
-        eval_set=[(X_val, y_val)],
-        eval_metric="mae",
-        categorical_feature=categorical_features,
-        callbacks=[lgb.early_stopping(300, verbose=False)],
-    )
-    pred_lgb = lgb_model.predict(X_val)
+    # 2. XGBoost with improved GPU settings  
+    print("  🚀 XGBoost 학습...")
+    try:
+        xgb_params = {
+            "objective": "reg:squarederror",
+            "tree_method": gpu_info["xgb_tree_method"],
+            "random_state": SEED,
+            "learning_rate": 0.05,
+            "max_depth": 8,
+            "n_estimators": 8000,
+            "early_stopping_rounds": 300,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "reg_lambda": 1.0,
+            "reg_alpha": 0.0,
+            "verbosity": 1,  # GPU 사용 여부 확인용
+        }
+        
+        if gpu_info["xgb_tree_method"] == "gpu_hist":
+            xgb_params.update({
+                "predictor": "gpu_predictor",
+                "gpu_id": 0,
+            })
+        
+        xgb_model = xgb.XGBRegressor(**xgb_params)
+        xgb_model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
+        
+        models["xgb"] = xgb_model
+        predictions["xgb"] = xgb_model.predict(X_val)
+        print(f"    ✅ XGBoost 완료 (method: {gpu_info['xgb_tree_method']})")
+        
+    except Exception as e:
+        print(f"    ❌ XGBoost GPU 실패, CPU로 재시도: {e}")
+        # CPU 백업
+        xgb_params["tree_method"] = "hist"
+        xgb_params.pop("predictor", None)
+        xgb_params.pop("gpu_id", None)
+        
+        xgb_model = xgb.XGBRegressor(**xgb_params)
+        xgb_model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
+        models["xgb"] = xgb_model
+        predictions["xgb"] = xgb_model.predict(X_val)
+        print("    ✅ XGBoost CPU 완료")
 
-    ##### XGBoost #####
-    xgb_model = xgb.XGBRegressor(
-        objective="reg:squarederror",
-        tree_method="gpu_hist",
-        predictor="gpu_predictor",
-        gpu_id=0,
-        random_state=SEED,
-        learning_rate=0.05,
-        max_depth=8,
-        n_estimators=8000,
-        early_stopping_rounds=300,  # XGBoost 3.x에서는 생성자에서 설정
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_lambda=1.0,
-        reg_alpha=0.0,
-        verbosity=0,
-    )
-    xgb_model.fit(
-        X_tr,
-        y_tr,
-        eval_set=[(X_val, y_val)],
-        verbose=False
-    )
-    pred_xgb = xgb_model.predict(X_val)
+    # 3. CatBoost with improved GPU settings
+    print("  🚀 CatBoost 학습...")
+    try:
+        cat_features_idx = [X_tr.columns.get_loc(col) for col in categorical_features]
+        cat_params = {
+            "loss_function": "MAE",
+            "iterations": 8000,
+            "early_stopping_rounds": 300,
+            "learning_rate": 0.05,
+            "depth": 8,
+            "random_seed": SEED,
+            "task_type": gpu_info["catboost_task_type"],
+            "verbose": 100,  # GPU 사용 여부 확인용
+        }
+        
+        if gpu_info["catboost_task_type"] == "GPU":
+            cat_params["devices"] = "0"
+        
+        cat_model = CatBoostRegressor(**cat_params)
+        cat_model.fit(
+            Pool(X_tr, y_tr, cat_features=cat_features_idx),
+            eval_set=Pool(X_val, y_val, cat_features=cat_features_idx),
+            verbose=False
+        )
+        
+        models["cat"] = cat_model
+        predictions["cat"] = cat_model.predict(X_val)
+        print(f"    ✅ CatBoost 완료 (task_type: {gpu_info['catboost_task_type']})")
+        
+    except Exception as e:
+        print(f"    ❌ CatBoost GPU 실패, CPU로 재시도: {e}")
+        # CPU 백업
+        cat_params["task_type"] = "CPU"
+        cat_params.pop("devices", None)
+        
+        cat_model = CatBoostRegressor(**cat_params)
+        cat_model.fit(
+            Pool(X_tr, y_tr, cat_features=cat_features_idx),
+            eval_set=Pool(X_val, y_val, cat_features=cat_features_idx),
+            verbose=False
+        )
+        models["cat"] = cat_model
+        predictions["cat"] = cat_model.predict(X_val)
+        print("    ✅ CatBoost CPU 완료")
 
-    ##### CatBoost #####
-    cat_features_idx = [X_tr.columns.get_loc(col) for col in categorical_features]
-    cat_model = CatBoostRegressor(
-        loss_function="MAE",
-        iterations=8000,
-        early_stopping_rounds=300,  # CatBoost도 생성자에서 설정
-        learning_rate=0.05,
-        depth=8,
-        random_seed=SEED,
-        task_type="GPU",
-        devices="0",
-        verbose=False,
-    )
-    cat_model.fit(
-        Pool(X_tr, y_tr, cat_features=cat_features_idx),
-        eval_set=Pool(X_val, y_val, cat_features=cat_features_idx),
-        verbose=False
-    )
-    pred_cat = cat_model.predict(X_val)
-
-    # return models and predictions
-    return (lgb_model, xgb_model, cat_model), np.vstack([pred_lgb, pred_xgb, pred_cat]).T
+    return models, np.column_stack([predictions["lgb"], predictions["xgb"], predictions["cat"]])
 
 ############################################################
 # 메인 스크립트
 ############################################################
 
-def main(train_path: Path, test_path: Path, out_path: Path):
+def main(train_path: str, test_path: str, submission_path: str):
+    print("🔍 GPU 환경 체크 중...")
+    gpu_info = check_gpu_availability()
+    
+    if gpu_info["gpu_available"]:
+        print("🎯 GPU 가속 모드 활성화!")
+        print(f"  - LightGBM: {gpu_info['lightgbm_device']}")
+        print(f"  - XGBoost: {gpu_info['xgb_tree_method']}")  
+        print(f"  - CatBoost: {gpu_info['catboost_task_type']}")
+    else:
+        print("⚠️ CPU 모드로 실행 (GPU 미사용)")
+    print()
+    
     print("📦 데이터 로드...")
     train_df = pd.read_parquet(train_path)
     test_df = pd.read_parquet(test_path)
@@ -150,25 +305,23 @@ def main(train_path: Path, test_path: Path, out_path: Path):
     X = train_df[feature_cols]
     y = train_df[target_col]
 
-    n_splits = 5
-    tscv = TimeSeriesSplit(n_splits=n_splits)
-
-    oof_preds = np.zeros((len(train_df), 3))  # 3 base models
+    print("🚀 5-Fold 교차검증...")
+    tscv = TimeSeriesSplit(n_splits=5, test_size=None)
+    oof_preds = np.zeros((len(y), 3))  # LGB, XGB, Cat 예측값
     test_preds = np.zeros((len(test_df), 3))
-    base_models_per_fold = []
+    
+    n_splits = 5
+    for fold, (tr_idx, val_idx) in enumerate(tscv.split(X)):
+        print(f"🚀 Fold {fold+1}/{n_splits}")
+        
+        X_tr, X_val = X.iloc[tr_idx], X.iloc[val_idx]
+        y_tr, y_val = y.iloc[tr_idx], y.iloc[val_idx]
 
-    fold = 0
-    for tr_idx, val_idx in tscv.split(X):
-        fold += 1
-        print(f"\n🚀 Fold {fold}/{n_splits}")
-        X_tr, y_tr = X.iloc[tr_idx], y.iloc[tr_idx]
-        X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
-
-        models, pred_val = train_fold(X_tr, y_tr, X_val, y_val, categorical_cols)
+        models, pred_val = train_fold(X_tr, y_tr, X_val, y_val, categorical_cols, gpu_info)
         oof_preds[val_idx, :] = pred_val
 
         # 테스트 예측 (평균)
-        fold_test_pred = np.column_stack([m.predict(test_df[feature_cols]) for m in models])
+        fold_test_pred = np.column_stack([m.predict(test_df[feature_cols]) for m in models.values()])
         test_preds += fold_test_pred / n_splits
 
         base_models_per_fold.append(models)
@@ -202,8 +355,8 @@ def main(train_path: Path, test_path: Path, out_path: Path):
         "num_date_time": test_df["num_date_time"],
         "answer": final_pred_kwh.clip(lower=0)
     })
-    submission.to_csv(out_path, index=False)
-    print(f"🎉 Submission saved to {out_path}")
+    submission.to_csv(submission_path, index=False)
+    print(f"🎉 Submission saved to {submission_path}")
 
 ############################################################
 if __name__ == "__main__":
