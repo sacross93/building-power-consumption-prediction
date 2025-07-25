@@ -146,7 +146,7 @@ def main():
         }
         
         final_model = lgb.LGBMRegressor(**lgb_params)
-        final_model.fit(X_train, y_train, categorical_feature=categorical_features_for_model)
+        final_model.fit(X_train, y_train)
         
         if not X_test.empty:
             preds = final_model.predict(X_test)
