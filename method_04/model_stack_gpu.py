@@ -91,7 +91,11 @@ def encode_categories(df: pd.DataFrame, cat_cols: List[str]) -> pd.DataFrame:
     df_enc = df.copy()
     for c in cat_cols:
         if str(df_enc[c].dtype) == "category":
-            df_enc[c] = df_enc[c].cat.codes.astype("int32").fillna(-1)
+            # cat.codes에서 -1(missing)를 그대로 유지
+            df_enc[c] = df_enc[c].cat.codes.astype("int32")
+        else:
+            # 이미 숫자형인 경우 (건물번호 등) 그대로 유지하되 int32로 변환
+            df_enc[c] = df_enc[c].astype("int32")
     return df_enc
 
 ############################################################
@@ -129,16 +133,14 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
         # 디바이스별 추가 파라미터
         if gpu_info["lightgbm_device"] == "gpu":
             lgb_params.update({
-                "gpu_use_dp": True,
+                "gpu_use_dp": False,  # True는 문제를 일으킬 수 있음
                 "gpu_platform_id": 0,
-                "gpu_device_id": 1,  # GPU 1번 사용
+                "gpu_device_id": 0,  # GPU 0번 사용 (일반적)
                 "max_bin": 255,
-                "force_row_wise": False,  # GPU 최적화
-                "force_col_wise": False,
             })
         elif gpu_info["lightgbm_device"] == "cuda":
             lgb_params.update({
-                "gpu_device_id": 1,  # GPU 1번 사용
+                "gpu_device_id": 0,  # GPU 0번 사용
                 "max_bin": 255,
             })
         
