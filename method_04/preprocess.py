@@ -166,12 +166,103 @@ def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: P
     )
 
     ########################################################
-    # 7) 범주형 temp_bin, 건물유형, 건물번호 유지
+    # 7) 고급 기상 피처 생성 (3위 코드 아이디어)
+    ########################################################
+    print("고급 기상 피처 생성 중...")
+    
+    # CDH (Cooling Degree Hours) - 냉방도시: 26도 이상 누적 온도
+    def calculate_cdh(df):
+        cdh_values = []
+        for building_id in df["건물번호"].unique():
+            building_data = df[df["건물번호"] == building_id].sort_values("일시")
+            temp_values = building_data["기온(°C)"].values
+            # 26도 기준 냉방도시 계산 (슬라이딩 윈도우)
+            cumsum = np.cumsum(np.maximum(temp_values - 26, 0))
+            # 11시간 윈도우로 CDH 계산
+            cdh = np.concatenate([
+                cumsum[:11] if len(cumsum) > 11 else cumsum,
+                cumsum[11:] - cumsum[:-11] if len(cumsum) > 11 else []
+            ])
+            cdh_values.extend(cdh)
+        return cdh_values
+    
+    all_df["CDH"] = calculate_cdh(all_df)
+    
+    # THI (Temperature-Humidity Index) - 불쾌지수
+    all_df["THI"] = (9/5 * all_df["기온(°C)"] - 
+                     0.55 * (1 - all_df["습도(%)"] / 100) * 
+                     (9/5 * all_df["기온(°C)"] - 26) + 32)
+    
+    # WCT (Wind Chill Temperature) - 체감온도
+    all_df["WCT"] = (13.12 + 0.6125 * all_df["기온(°C)"] - 
+                     11.37 * (all_df["풍속(m/s)"] ** 0.16) + 
+                     0.3965 * (all_df["풍속(m/s)"] ** 0.16) * all_df["기온(°C)"])
+    
+    print(f"✅ 고급 기상 피처 생성 완료: CDH, THI, WCT")
+
+    ########################################################
+    # 8) 통계 기반 피처 생성 (과거 패턴 학습)
+    ########################################################
+    print("통계 기반 피처 생성 중...")
+    
+    # Train 데이터만으로 통계 계산 (데이터 리키지 방지)
+    train_mask = ~all_df["전력소비량(kWh)"].isna()
+    train_stats = all_df[train_mask].copy()
+    
+    # 건물×시간×요일 통계
+    building_hour_weekday_stats = train_stats.groupby(
+        ["건물번호", "hour", "weekday"]
+    )["전력소비량(kWh)"].agg(["mean", "std"]).reset_index()
+    building_hour_weekday_stats.columns = [
+        "건물번호", "hour", "weekday", "building_hour_weekday_mean", "building_hour_weekday_std"
+    ]
+    
+    # 건물×시간 통계  
+    building_hour_stats = train_stats.groupby(
+        ["건물번호", "hour"]
+    )["전력소비량(kWh)"].agg(["mean", "std"]).reset_index()
+    building_hour_stats.columns = [
+        "건물번호", "hour", "building_hour_mean", "building_hour_std"
+    ]
+    
+    # 건물×월 통계 (계절성)
+    building_month_stats = train_stats.groupby(
+        ["건물번호", "month"]
+    )["전력소비량(kWh)"].agg(["mean", "std"]).reset_index()
+    building_month_stats.columns = [
+        "건물번호", "month", "building_month_mean", "building_month_std"
+    ]
+    
+    # 전체 데이터에 통계 피처 병합
+    all_df = all_df.merge(building_hour_weekday_stats, on=["건물번호", "hour", "weekday"], how="left")
+    all_df = all_df.merge(building_hour_stats, on=["건물번호", "hour"], how="left")
+    all_df = all_df.merge(building_month_stats, on=["건물번호", "month"], how="left")
+    
+    # NaN 값 처리 (새로운 조합의 경우 전체 평균으로 대체)
+    overall_mean = train_stats["전력소비량(kWh)"].mean()
+    overall_std = train_stats["전력소비량(kWh)"].std()
+    
+    stat_cols = [
+        "building_hour_weekday_mean", "building_hour_weekday_std",
+        "building_hour_mean", "building_hour_std", 
+        "building_month_mean", "building_month_std"
+    ]
+    
+    for col in stat_cols:
+        if "mean" in col:
+            all_df[col] = all_df[col].fillna(overall_mean)
+        else:  # std
+            all_df[col] = all_df[col].fillna(overall_std)
+    
+    print(f"✅ 통계 기반 피처 생성 완료: {len(stat_cols)}개 피처")
+
+    ########################################################
+    # 9) 범주형 temp_bin, 건물유형, 건물번호 유지
     ########################################################
     all_df["temp_bin"] = all_df["temp_bin"].astype("category")
 
     ########################################################
-    # 8) 캐싱 – train / test 분리 저장
+    # 10) 캐싱 – train / test 분리 저장
     ########################################################
     output_dir.mkdir(parents=True, exist_ok=True)
     df_train = all_df[mask_train].copy()
