@@ -143,9 +143,9 @@ def train_and_predict(preprocessed_path, data_dir, model_output_dir, submission_
 
 if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    preprocessed_file = os.path.join(current_dir, '..\', 'preprocessed_data_gemini', 'preprocessed_gemini.csv')
-    data_directory = os.path.join(current_dir, '..\', 'data')
-    model_results_dir = os.path.join(current_dir, '..\', 'modeling_results')
-    submission_results_dir = os.path.join(current_dir, '..\', 'result_gemini')
+    preprocessed_file = os.path.join(current_dir, '../', 'preprocessed_data_gemini', 'preprocessed_gemini.csv')
+    data_directory = os.path.join(current_dir, '../', 'data')
+    model_results_dir = os.path.join(current_dir, '../', 'modeling_results')
+    submission_results_dir = os.path.join(current_dir, '../', 'result_gemini')
 
     train_and_predict(preprocessed_file, data_directory, model_results_dir, submission_results_dir)
