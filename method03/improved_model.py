@@ -130,26 +130,23 @@ def main():
         y_train = type_train_df['전력소비량(kWh)']
         X_test = type_test_df[features]
 
-        # --- 데이터 진단 코드 시작 ---
-        print(f"--- In-depth analysis for building type: {b_type} ---")
-        print(f"Shape of training data for this type (after dropna): {X_train.shape}")
+        # Convert to numpy array for GPU training stability
+        X_train_np = X_train.to_numpy()
+        y_train_np = y_train.to_numpy()
+        X_test_np = X_test.to_numpy()
 
-        if X_train.shape[0] < 50: # 데이터가 너무 적으면 경고
-            print("!!! WARNING: Very few data points after processing. This is likely the cause of the issue.")
+        # --- Data Sample Check Start ---
+        print(f"--- Checking data for GPU for building type: {b_type} ---")
+        print(f"X_train_np shape: {X_train_np.shape}, y_train_np shape: {y_train_np.shape}")
+        print("Sample of X_train_np (first 3 rows):")
+        print(X_train_np[:3])
+        print("\nSample of y_train_np (first 3 values):")
+        print(y_train_np[:3])
+        print("-----------------------------------------------------------\n")
+        # --- Data Sample Check End ---
 
-        print("\n>>> Feature variance check (number of unique values):")
-        for col in X_train.columns:
-            # 고유값이 1개인 피처(상수)가 있는지 확인
-            nunique = X_train[col].nunique()
-            if nunique == 1:
-                print(f"!!! CONSTANT FEATURE: '{col}' has only 1 unique value.")
-            # elif nunique < 5:
-            #     print(f"- '{col}': {nunique} unique values (very low variance)")
-
-        print("\n>>> Target variable description:")
-        print(y_train.describe())
-        print("-----------------------------------------------------\n")
-        # --- 데이터 진단 코드 끝 ---
+        # Find index of categorical features for lightgbm
+        categorical_feature_indices = [i for i, col in enumerate(X_train.columns) if col in categorical_features_for_model]
 
         lgb_params = {
             'objective': 'regression_l1',
@@ -167,10 +164,10 @@ def main():
         }
         
         final_model = lgb.LGBMRegressor(**lgb_params)
-        final_model.fit(X_train, y_train)
+        final_model.fit(X_train_np, y_train_np, categorical_feature=categorical_feature_indices)
         
         if not X_test.empty:
-            preds = final_model.predict(X_test)
+            preds = final_model.predict(X_test_np)
             preds = np.expm1(preds)
             preds[preds < 0] = 0
             
