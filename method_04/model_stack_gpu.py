@@ -72,6 +72,7 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features: List[str]):
         learning_rate=0.05,
         max_depth=8,
         n_estimators=8000,
+        early_stopping_rounds=300,  # XGBoost 3.x에서는 생성자에서 설정
         subsample=0.8,
         colsample_bytree=0.8,
         reg_lambda=1.0,
@@ -82,8 +83,7 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features: List[str]):
         X_tr,
         y_tr,
         eval_set=[(X_val, y_val)],
-        verbose=False,
-        callbacks=[xgb.callback.EarlyStopping(rounds=300)]
+        verbose=False
     )
     pred_xgb = xgb_model.predict(X_val)
 
@@ -92,6 +92,7 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features: List[str]):
     cat_model = CatBoostRegressor(
         loss_function="MAE",
         iterations=8000,
+        early_stopping_rounds=300,  # CatBoost도 생성자에서 설정
         learning_rate=0.05,
         depth=8,
         random_seed=SEED,
@@ -102,8 +103,7 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features: List[str]):
     cat_model.fit(
         Pool(X_tr, y_tr, cat_features=cat_features_idx),
         eval_set=Pool(X_val, y_val, cat_features=cat_features_idx),
-        verbose=False,
-        early_stopping_rounds=300,
+        verbose=False
     )
     pred_cat = cat_model.predict(X_val)
 
@@ -118,6 +118,16 @@ def main(train_path: Path, test_path: Path, out_path: Path):
     print("📦 데이터 로드...")
     train_df = pd.read_parquet(train_path)
     test_df = pd.read_parquet(test_path)
+
+    # test 데이터에 num_date_time이 없으면 생성
+    if "num_date_time" not in test_df.columns:
+        if "일시" in test_df.columns and "건물번호" in test_df.columns:
+            test_df["num_date_time"] = (
+                test_df["건물번호"].astype(str) + "_" + 
+                test_df["일시"].dt.strftime("%Y%m%d %H")
+            )
+        else:
+            raise ValueError("test 데이터에 num_date_time 컬럼이 없고 일시/건물번호로 생성할 수 없습니다.")
 
     # 타겟 & 피처 분리
     # 전처리에서 생성한 로그 변환 타겟 컬럼명 확인
