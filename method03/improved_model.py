@@ -31,9 +31,7 @@ def smape(y_true, y_pred):
     denominator = np.abs(y_true_exp) + np.abs(y_pred_exp) + epsilon
     return np.mean(numerator / denominator) * 100
 
-def create_features(df, building_info_df):
-    # Merge building info first to use its features
-    df = pd.merge(df, building_info_df, on='건물번호', how='left')
+def create_features(df):
     df = df.sort_values(by=['건물번호', '일시']).reset_index(drop=True)
 
     # 1. 시간 관련 피처
@@ -44,7 +42,6 @@ def create_features(df, building_info_df):
     df['is_weekend'] = (df['weekday'] >= 5).astype(int)
     df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
     df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
-    # [개선점 4.4] 계절 추세 피처 추가
     df['day_of_year'] = df['일시'].dt.dayofyear
 
     # 2. 공휴일 피처
@@ -53,7 +50,6 @@ def create_features(df, building_info_df):
 
     # 3. 날씨 관련 피처
     df['THI'] = 9/5 * df['기온(°C)'] - 0.55 * (1 - df['습도(%)']/100) * (9/5 * df['기온(°C)'] - 26) + 32
-    # [개선점 4.3] 비선형 온도 피처 (HDD/CDD) 추가
     df['CDD'] = np.maximum(0, df['기온(°C)'] - 21)
     df['HDD'] = np.maximum(0, 18 - df['기온(°C)'])
 
@@ -61,17 +57,13 @@ def create_features(df, building_info_df):
     df['temp_x_hour'] = df['기온(°C)'] * df['hour']
     df['temp_rolling_mean_6'] = df.groupby('건물번호')['기온(°C)'].transform(lambda x: x.rolling(window=6, min_periods=1).mean())
     df['temp_rolling_std_6'] = df.groupby('건물번호')['기온(°C)'].transform(lambda x: x.rolling(window=6, min_periods=1).std()).fillna(0)
-    # [개선점 4.6] 습도 이동 통계 추가
     df['humidity_rolling_mean_6'] = df.groupby('건물번호')['습도(%)'].transform(lambda x: x.rolling(window=6, min_periods=1).mean())
     df['humidity_rolling_std_6'] = df.groupby('건물번호')['습도(%)'].transform(lambda x: x.rolling(window=6, min_periods=1).std()).fillna(0)
 
     # 5. 시차 변수 (Data Leakage 방지)
-    # [개선점 4.2] 단기 시차 피처 추가
     lags = [1, 2, 3, 24, 48, 168]
     for lag in lags:
-        # 전력소비량 시차 피처는 훈련 데이터에만 존재하므로, combined_df에서 생성 후 분리
-        if '전력소비량(kWh)' in df.columns:
-             df[f'power_lag_{lag}'] = df.groupby('건물번호')['전력소비량(kWh)'].transform(lambda x: x.shift(lag))
+        df[f'power_lag_{lag}'] = df.groupby('건물번호')['전력소비량(kWh)'].transform(lambda x: x.shift(lag))
         df[f'temp_lag_{lag}'] = df.groupby('건물번호')['기온(°C)'].transform(lambda x: x.shift(lag))
 
     return df
@@ -84,7 +76,6 @@ def main():
     print("데이터 로딩 완료.")
 
     print("건물 정보 전처리 시작...")
-    # [개선점 4.5] 치우친 수치형 피처 로그 변환
     numeric_cols = ['연면적(m2)', '냉방면적(m2)', '태양광용량(kW)', 'ESS저장용량(kWh)', 'PCS용량(kW)']
     for col in numeric_cols:
         building_info_df[col] = building_info_df[col].replace('-', '0').astype(float)
@@ -92,15 +83,20 @@ def main():
     print("건물 정보 전처리 완료.")
 
     print("피처 엔지니어링 시작...")
-    # 훈련 데이터에만 전력소비량 시차 변수를 생성하기 위해 먼저 처리
-    train_df = create_features(train_df, building_info_df)
+    train_df = pd.merge(train_df, building_info_df, on='건물번호', how='left')
+    test_df = pd.merge(test_df, building_info_df, on='건물번호', how='left')
     
-    # 테스트 데이터에는 전력소비량 컬럼이 없으므로, 시차 변수 생성 로직을 건너뛰도록 처리
-    test_df = create_features(test_df, building_info_df)
+    test_df['전력소비량(kWh)'] = np.nan
+    combined_df = pd.concat([train_df, test_df], ignore_index=True)
+    
+    combined_df = create_features(combined_df)
+    
+    train_processed_df = combined_df[~combined_df['전력소비량(kWh)'].isna()].copy()
+    test_processed_df = combined_df[combined_df['전력소비량(kWh)'].isna()].copy()
     print("피처 엔지니어링 완료.")
 
-    # [개선점 4.1] 타겟 변수 로그 변환
-    train_df['전력소비량(kWh)'] = np.log1p(train_df['전력소비량(kWh)'])
+    # 타겟 변수 로그 변환
+    train_processed_df['전력소비량(kWh)'] = np.log1p(train_processed_df['전력소비량(kWh)'])
 
     features = [
         '건물번호', '기온(°C)', '풍속(m/s)', '습도(%)',

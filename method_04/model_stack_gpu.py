@@ -76,7 +76,13 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features: List[str]):
         reg_alpha=0.0,
         verbosity=0,
     )
-    xgb_model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False, early_stopping_rounds=300)
+    xgb_model.fit(
+        X_tr,
+        y_tr,
+        eval_set=[(X_val, y_val)],
+        verbose=False,
+        callbacks=[xgb.callback.EarlyStopping(rounds=300)]
+    )
     pred_xgb = xgb_model.predict(X_val)
 
     ##### CatBoost #####
