@@ -25,9 +25,12 @@ def train_and_predict(preprocessed_path, data_dir, model_output_dir, submission_
 
     # 2. 테스트 데이터 전처리
     print("2. Preprocessing test data...")
-    # 컬럼명 영문으로 변경
+    # 컬럼명 영문으로 변경 (test.csv는 sunshine, solar_radiation 컬럼이 없음)
     test_df.columns = ['num_date_time', 'building_number', 'datetime', 'temperature', 'precipitation', 
-                       'windspeed', 'humidity', 'sunshine', 'solar_radiation']
+                       'windspeed', 'humidity']
+    # 누락된 컬럼 추가 및 0으로 채우기
+    test_df['sunshine'] = 0
+    test_df['solar_radiation'] = 0
     building_info_df.columns = ['building_number', 'building_type', 'total_area', 'cooling_area', 
                                 'solar_capacity', 'ess_capacity', 'pcs_capacity']
 
