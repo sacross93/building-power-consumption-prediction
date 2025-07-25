@@ -76,8 +76,7 @@ def train_and_predict(preprocessed_path, data_dir, model_output_dir, submission_
         'feature_fraction': 0.8,
         'bagging_fraction': 0.8,
         'bagging_freq': 1,
-        'verbose': -1,
-        'n_jobs': -1,
+        'verbose': 1, # GPU 사용 확인을 위해 로그 출력
         'seed': 42,
         'device': 'gpu' # GPU 사용 설정
     }
