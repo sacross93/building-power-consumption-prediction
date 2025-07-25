@@ -115,7 +115,7 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
     models = {}
     predictions = {}
     
-    # 1. LightGBM with improved GPU settings
+    # 1. LightGBM - 일단 CPU로 강제 설정 (GPU 학습 문제 때문)
     print("  🚀 LightGBM 학습...")
     try:
         lgb_params = {
@@ -126,24 +126,11 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
             "num_leaves": 256,
             "max_depth": -1,
             "n_estimators": 8000,
-            "device": gpu_info["lightgbm_device"],
-            "verbose": 1,  # GPU 사용 여부 확인을 위해 verbose 활성화
+            "device": "cpu",  # 강제 CPU 모드
+            "verbose": -1,
         }
         
-        # 디바이스별 추가 파라미터
-        if gpu_info["lightgbm_device"] == "gpu":
-            lgb_params.update({
-                "gpu_use_dp": False,  # True는 문제를 일으킬 수 있음
-                "gpu_platform_id": 0,
-                "gpu_device_id": 1,  # GPU 1번 사용
-                "max_bin": 255,
-            })
-        elif gpu_info["lightgbm_device"] == "cuda":
-            lgb_params.update({
-                "gpu_device_id": 1,  # GPU 1번 사용
-                "max_bin": 255,
-            })
-        
+        # CPU 모드이므로 추가 파라미터 불필요
         lgb_model = lgb.LGBMRegressor(**lgb_params)
         lgb_model.fit(
             X_tr,
@@ -156,17 +143,24 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
         
         models["lgb"] = lgb_model
         predictions["lgb"] = lgb_model.predict(X_val)
-        print(f"    ✅ LightGBM 완료 (device: {gpu_info['lightgbm_device']})")
+        print("    ✅ LightGBM 완료 (device: cpu)")
         
     except Exception as e:
         print(f"    ❌ LightGBM GPU 실패, CPU로 재시도: {e}")
         # CPU 백업
-        lgb_params["device"] = "cpu"
-        lgb_params.pop("gpu_use_dp", None)
-        lgb_params.pop("gpu_platform_id", None)
-        lgb_params.pop("gpu_device_id", None)
+        lgb_params_cpu = {
+            "objective": "regression_l1",
+            "metric": "mae",
+            "random_state": SEED,
+            "learning_rate": 0.05,
+            "num_leaves": 256,
+            "max_depth": -1,
+            "n_estimators": 8000,
+            "device": "cpu",
+            "verbose": -1,
+        }
         
-        lgb_model = lgb.LGBMRegressor(**lgb_params)
+        lgb_model = lgb.LGBMRegressor(**lgb_params_cpu)
         lgb_model.fit(
             X_tr, y_tr,
             eval_set=[(X_val, y_val)],
