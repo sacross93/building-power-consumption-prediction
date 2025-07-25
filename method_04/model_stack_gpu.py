@@ -164,6 +164,11 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
 
     # 2. XGBoost with improved GPU settings  
     print("  🚀 XGBoost 학습...")
+
+    # 카테고리 → int 코드 변환 (GPU categorical 미지원 대비)
+    X_tr_enc = encode_categories(X_tr, categorical_features)
+    X_val_enc = encode_categories(X_val, categorical_features)
+
     try:
         xgb_params = {
             "objective": "reg:squarederror",
@@ -187,10 +192,10 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
             })
         
         xgb_model = xgb.XGBRegressor(**xgb_params)
-        xgb_model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
+        xgb_model.fit(X_tr_enc, y_tr, eval_set=[(X_val_enc, y_val)], verbose=False)
         
         models["xgb"] = xgb_model
-        predictions["xgb"] = xgb_model.predict(X_val)
+        predictions["xgb"] = xgb_model.predict(X_val_enc)
         print(f"    ✅ XGBoost 완료 (method: {gpu_info['xgb_tree_method']})")
         
     except Exception as e:
@@ -201,9 +206,9 @@ def train_fold(X_tr, y_tr, X_val, y_val, categorical_features, gpu_info):
         xgb_params.pop("gpu_id", None)
         
         xgb_model = xgb.XGBRegressor(**xgb_params)
-        xgb_model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
+        xgb_model.fit(X_tr_enc, y_tr, eval_set=[(X_val_enc, y_val)], verbose=False)
         models["xgb"] = xgb_model
-        predictions["xgb"] = xgb_model.predict(X_val)
+        predictions["xgb"] = xgb_model.predict(X_val_enc)
         print("    ✅ XGBoost CPU 완료")
 
     # 3. CatBoost with improved GPU settings
@@ -321,7 +326,15 @@ def main(train_path: str, test_path: str, submission_path: str):
         oof_preds[val_idx, :] = pred_val
 
         # 테스트 예측 (평균)
-        fold_test_pred = np.column_stack([m.predict(test_df[feature_cols]) for m in models.values()])
+        # LightGBM & CatBoost: 원본 test_df 사용, XGBoost: 인코딩 필요
+        test_df_enc = encode_categories(test_df[feature_cols], categorical_cols)
+        preds_list = []
+        for name, model in models.items():
+            if name == "xgb":
+                preds_list.append(model.predict(test_df_enc))
+            else:
+                preds_list.append(model.predict(test_df[feature_cols]))
+        fold_test_pred = np.column_stack(preds_list)
         test_preds += fold_test_pred / n_splits
 
         base_models_per_fold.append(models)
