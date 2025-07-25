@@ -370,13 +370,9 @@ def main(train_path: str, test_path: str, submission_path: str):
 
     # Test meta predictions
     test_meta = enet.predict(test_preds)
-    # log_power = log(power_per_area) 이므로 면적을 곱해야 함
-    # 면적도 로그 변환되었으면 그것을 사용, 없으면 원본 사용
-    if "log_연면적(m2)" in test_df.columns:
-        area_col = np.expm1(test_df["log_연면적(m2)"])
-    else:
-        area_col = test_df["연면적(m2)"]
-    final_pred_kwh = np.expm1(test_meta) * area_col
+    # log_power = log1p(전력소비량)이므로 expm1로 역변환하면 됨
+    # 연면적을 곱할 필요 없음 (이미 전력소비량 자체를 예측)
+    final_pred_kwh = np.expm1(test_meta)
 
     # 제출 파일 생성
     submission = pd.DataFrame({
