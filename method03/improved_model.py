@@ -103,7 +103,7 @@ def main():
         'power_lag_24', 'temp_lag_24', 'power_lag_48', 'temp_lag_48', 'power_lag_168', 'temp_lag_168'
     ]
     
-    categorical_features_for_model = ['건물번호', '건물유형']
+    categorical_features_for_model = ['건물번호']
     train_processed_df['건물번호'] = train_processed_df['건물번호'].astype('category')
     train_processed_df['건물유형'] = train_processed_df['건물유형'].astype('category')
     test_processed_df['건물번호'] = test_processed_df['건물번호'].astype('category')
