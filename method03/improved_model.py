@@ -1,195 +1,209 @@
 import pandas as pd
-import lightgbm as lgb
 import numpy as np
+import xgboost as xgb
+from sklearn.model_selection import KFold
 import warnings
-import holidays
+import random as rn
 
-# 경고 메시지 무시
+# --- 기본 설정 ---
 warnings.filterwarnings('ignore')
+pd.set_option('display.max_columns', None)
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+rn.seed(RANDOM_SEED)
 
-# ------------------------------------------------------------------------------------------------
-# 주석 설명: 코드 로직 및 개선 사항 (v4.1 - Gemini Pro)
-# ------------------------------------------------------------------------------------------------
-# [개선점 4] 시각 자료 분석 기반 피처 엔지니어링 및 타겟 변환:
-#    (이전 버전과 동일)
-# [수정점 1] 피처 생성 로직 수정:
-#    - KeyError 방지를 위해 훈련/테스트 데이터를 통합한 후 시차 피처를 일괄 생성하고, 다시 분리하는 방식으로 수정.
-# ------------------------------------------------------------------------------------------------
+# --- 사용자 정의 함수 ---
 
 def smape(y_true, y_pred):
-    epsilon = 1e-10
-    y_true_exp = np.expm1(y_true)
-    y_pred_exp = np.expm1(y_pred)
-    numerator = 2 * np.abs(y_pred_exp - y_true_exp)
-    denominator = np.abs(y_true_exp) + np.abs(y_pred_exp) + epsilon
-    return np.mean(numerator / denominator) * 100
+    """
+    Symmetric Mean Absolute Percentage Error (SMAPE)
+    실제값과 예측값 사이의 상대적인 오차를 측정합니다.
+    """
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    v = 2 * abs(y_pred - y_true) / (abs(y_pred) + abs(y_true))
+    return np.mean(v) * 100
 
-def create_features(df):
-    df = df.sort_values(by=['건물번호', '일시']).reset_index(drop=True)
+def weighted_mse(alpha=1):
+    """
+    가중 평균 제곱 오차 (Weighted Mean Squared Error)
+    과대/과소 예측에 따라 다른 패널티를 부여하는 XGBoost용 맞춤 손실 함수입니다.
+    """
+    def weighted_mse_fixed(predt, dtrain):
+        label = dtrain.get_label()
+        residual = (label - predt).astype("float")
+        grad = np.where(residual > 0, -2 * alpha * residual, -2 * residual)
+        hess = np.where(residual > 0, 2 * alpha, 2.0)
+        return grad, hess
+    return weighted_mse_fixed
 
-    # 1. 시간 관련 피처
-    df['month'] = df['일시'].dt.month
-    df['day'] = df['일시'].dt.day
-    df['hour'] = df['일시'].dt.hour
-    df['weekday'] = df['일시'].dt.weekday
-    df['is_weekend'] = (df['weekday'] >= 5).astype(int)
-    df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
-    df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
-    df['day_of_year'] = df['일시'].dt.dayofyear
+def custom_smape_metric(predt, dtrain):
+    """
+    XGBoost용 맞춤 평가 지표 (SMAPE)
+    학습 과정에서 SMAPE를 직접 모니터링하기 위해 사용됩니다.
+    """
+    label = dtrain.get_label()
+    # 예측값(predt)은 log 변환된 값이므로, 원래 스케일로 되돌려(np.exp) SMAPE를 계산합니다.
+    predt_exp = np.exp(predt)
+    label_exp = np.exp(label)
+    return 'custom_smape', smape(label_exp, predt_exp)
 
-    # 2. 공휴일 피처
-    kr_holidays = holidays.KR()
-    df['is_holiday'] = df['일시'].dt.date.apply(lambda x: 1 if x in kr_holidays else 0).astype(int)
+def create_features(df, train_df=None):
+    """
+    다양한 피처를 생성하는 함수
+    """
+    df['date_time'] = pd.to_datetime(df['일시'], format='%Y%m%d %H')
 
-    # 3. 날씨 관련 피처
-    df['THI'] = 9/5 * df['기온(°C)'] - 0.55 * (1 - df['습도(%)']/100) * (9/5 * df['기온(°C)'] - 26) + 32
-    df['CDD'] = np.maximum(0, df['기온(°C)'] - 21)
-    df['HDD'] = np.maximum(0, 18 - df['기온(°C)'])
+    # 1. 시간 관련 기본 피처
+    df['hour'] = df['date_time'].dt.hour
+    df['day'] = df['date_time'].dt.day
+    df['month'] = df['date_time'].dt.month
+    df['day_of_week'] = df['date_time'].dt.dayofweek
+    df['day_of_year'] = df['date_time'].dt.dayofyear
 
-    # 4. 상호작용 및 이동통계 피처
-    df['temp_x_hour'] = df['기온(°C)'] * df['hour']
-    df['temp_rolling_mean_6'] = df.groupby('건물번호')['기온(°C)'].transform(lambda x: x.rolling(window=6, min_periods=1).mean())
-    df['temp_rolling_std_6'] = df.groupby('건물번호')['기온(°C)'].transform(lambda x: x.rolling(window=6, min_periods=1).std()).fillna(0)
-    df['humidity_rolling_mean_6'] = df.groupby('건물번호')['습도(%)'].transform(lambda x: x.rolling(window=6, min_periods=1).mean())
-    df['humidity_rolling_std_6'] = df.groupby('건물번호')['습도(%)'].transform(lambda x: x.rolling(window=6, min_periods=1).std()).fillna(0)
+    # 2. 주기성(Cyclical) 피처 (sin/cos 변환)
+    df['sin_hour'] = np.sin(2 * np.pi * df['hour'] / 24.0)
+    df['cos_hour'] = np.cos(2 * np.pi * df['hour'] / 24.0)
+    df['sin_day_of_week'] = np.sin(2 * np.pi * df['day_of_week'] / 7.0)
+    df['cos_day_of_week'] = np.cos(2 * np.pi * df['day_of_week'] / 7.0)
+    df['sin_month'] = np.sin(2 * np.pi * df['month'] / 12.0)
+    df['cos_month'] = np.cos(2 * np.pi * df['month'] / 12.0)
 
-    # 5. 시차 변수 (Data Leakage 방지)
-    lags = [1, 2, 3, 24, 48, 168]
-    for lag in lags:
-        df[f'power_lag_{lag}'] = df.groupby('건물번호')['전력소비량(kWh)'].transform(lambda x: x.shift(lag))
-        df[f'temp_lag_{lag}'] = df.groupby('건물번호')['기온(°C)'].transform(lambda x: x.shift(lag))
+    # 3. 공휴일 피처
+    # 간단한 주말 기반 공휴일. (holidays 라이브러리 대신 사용)
+    df['holiday'] = np.where(df['day_of_week'] >= 5, 1, 0)
+
+    # 4. 날씨 관련 공학 피처
+    df['THI'] = 9/5 * df['기온(°C)'] - 0.55 * (1 - df['습도(%)'] / 100) * (9/5 * df['기온(°C)'] - 26) + 32
+    df['WCT'] = 13.12 + 0.6125 * df['기온(°C)'] - 11.37 * (df['풍속(m/s)']**0.16) + 0.3965 * (df['풍속(m/s)']**0.16) * df['기온(°C)']
+    
+    # 5. 과거 데이터 기반 통계 피처 (Data Leakage 방지)
+    if train_df is not None:
+        power_mean = pd.pivot_table(train_df, values='전력소비량(kWh)', index=['건물번호', 'hour', 'day_of_week'], aggfunc=np.mean).reset_index()
+        power_mean.rename(columns={'전력소비량(kWh)': 'day_hour_mean'}, inplace=True)
+        df = pd.merge(df, power_mean, on=['건물번호', 'hour', 'day_of_week'], how='left')
+
+        power_std = pd.pivot_table(train_df, values='전력소비량(kWh)', index=['건물번호', 'hour', 'day_of_week'], aggfunc=np.std).reset_index()
+        power_std.rename(columns={'전력소비량(kWh)': 'day_hour_std'}, inplace=True)
+        df = pd.merge(df, power_std, on=['건물번호', 'hour', 'day_of_week'], how='left')
 
     return df
 
 def main():
-    print("데이터 로딩 시작...")
-    train_df = pd.read_csv('data/train.csv', parse_dates=['일시'])
-    test_df = pd.read_csv('data/test.csv', parse_dates=['일시'])
-    building_info_df = pd.read_csv('data/building_info.csv')
-    print("데이터 로딩 완료.")
+    print("1. 데이터 로딩 및 기본 전처리...")
+    train = pd.read_csv('data/train.csv')
+    test = pd.read_csv('data/test.csv')
+    building_info = pd.read_csv('data/building_info.csv')
 
-    print("건물 정보 전처리 시작...")
-    numeric_cols = ['연면적(m2)', '냉방면적(m2)', '태양광용량(kW)', 'ESS저장용량(kWh)', 'PCS용량(kW)']
-    for col in numeric_cols:
-        building_info_df[col] = building_info_df[col].replace('-', '0').astype(float)
-        building_info_df[col] = np.log1p(building_info_df[col])
-    print("건물 정보 전처리 완료.")
+    # 건물 유형 영문으로 변환
+    translation_dict = {
+        '건물기타': 'Other Buildings', '공공': 'Public', '대학교': 'University', '백화점및아울렛': 'Department Store',
+        '병원': 'Hospital', '상업': 'Commercial', '아파트': 'Apartment', '연구소': 'Research Institute',
+        '데이터센터': 'IDC', '호텔및리조트': 'Hotel'
+    }
+    building_info['건물유형'] = building_info['건물유형'].replace(translation_dict)
 
-    print("피처 엔지니어링 시작...")
-    train_df = pd.merge(train_df, building_info_df, on='건물번호', how='left')
-    test_df = pd.merge(test_df, building_info_df, on='건물번호', how='left')
-    
-    test_df['전력소비량(kWh)'] = np.nan
-    combined_df = pd.concat([train_df, test_df], ignore_index=True)
-    
-    combined_df = create_features(combined_df)
-    
-    train_processed_df = combined_df[~combined_df['전력소비량(kWh)'].isna()].copy()
-    test_processed_df = combined_df[combined_df['전력소비량(kWh)'].isna()].copy()
-    print("피처 엔지니어링 완료.")
+    # 설비 유무 피처 생성
+    building_info['태양광용량(kW)'] = building_info['태양광용량(kW)'].replace('-', '0').astype(float)
+    building_info['ESS저장용량(kWh)'] = building_info['ESS저장용량(kWh)'].replace('-', '0').astype(float)
+    building_info['PCS용량(kW)'] = building_info['PCS용량(kW)'].replace('-', '0').astype(float)
+    building_info['solar_power_utility'] = np.where(building_info['태양광용량(kW)'] > 0, 1, 0)
+    building_info['ess_utility'] = np.where(building_info['ESS저장용량(kWh)'] > 0, 1, 0)
 
-    # 타겟 변수 로그 변환
-    train_processed_df['전력소비량(kWh)'] = np.log1p(train_processed_df['전력소비량(kWh)'])
+    train = pd.merge(train, building_info, on='건물번호', how='left')
+    test = pd.merge(test, building_info, on='건물번호', how='left')
 
+    # 0인 전력소비량 제거
+    train = train[train['전력소비량(kWh)'] > 0]
+
+    print("2. 피처 엔지니어링...")
+    # 훈련 데이터에서만 통계 피처를 생성하기 위해 train 복사본 전달
+    train = create_features(train, train.copy())
+    test = create_features(test, train.copy()) # test 세트에는 train의 통계량을 적용
+
+    # 사용할 피처 선택
     features = [
         '건물번호', '기온(°C)', '풍속(m/s)', '습도(%)',
-        '연면적(m2)', '냉방면적(m2)', '태양광용량(kW)', 'ESS저장용량(kWh)', 'PCS용량(kW)',
-        'month', 'day', 'hour', 'weekday', 'is_weekend', 'is_holiday',
-        'hour_sin', 'hour_cos', 'THI', 'temp_x_hour',
-        'temp_rolling_mean_6', 'temp_rolling_std_6',
-        'humidity_rolling_mean_6', 'humidity_rolling_std_6',
-        'day_of_year', 'CDD', 'HDD',
-        'power_lag_1', 'temp_lag_1', 'power_lag_2', 'temp_lag_2', 'power_lag_3', 'temp_lag_3',
-        'power_lag_24', 'temp_lag_24', 'power_lag_48', 'temp_lag_48', 'power_lag_168', 'temp_lag_168'
+        'hour', 'day', 'month', 'day_of_week', 'day_of_year',
+        'sin_hour', 'cos_hour', 'sin_day_of_week', 'cos_day_of_week',
+        'sin_month', 'cos_month', 'holiday', 'THI', 'WCT',
+        'day_hour_mean', 'day_hour_std',
+        'solar_power_utility', 'ess_utility'
     ]
     
-    categorical_features_for_model = ['건물번호']
-    train_processed_df['건물번호'] = train_processed_df['건물번호'].astype('category')
-    train_processed_df['건물유형'] = train_processed_df['건물유형'].astype('category')
-    test_processed_df['건물번호'] = test_processed_df['건물번호'].astype('category')
-    test_processed_df['건물유형'] = test_processed_df['건물유형'].astype('category')
+    target = '전력소비량(kWh)'
 
-    print("건물 유형별 모델 학습 및 검증 시작...")
+    # K-Fold 교차 검증 설정
+    KFOLD_SPLITS = 5
+    kf = KFold(n_splits=KFOLD_SPLITS, shuffle=True, random_state=RANDOM_SEED)
+
+    # 결과 저장을 위한 데이터프레임
+    oof_preds = np.zeros(train.shape[0])
+    test_preds = np.zeros(test.shape[0])
     
-    building_types = train_processed_df['건물유형'].cat.categories
-    total_predictions = []
-    
+    building_types = train['건물유형'].unique()
+
+    print("3. 건물 유형별 모델 학습 및 교차 검증...")
     for b_type in building_types:
-        print(f"--- {b_type} 유형 모델 학습 ---")
+        print(f"\n--- 건물 유형: {b_type} ---")
         
-        type_train_df = train_processed_df[train_processed_df['건물유형'] == b_type].copy()
-        type_test_df = test_processed_df[test_processed_df['건물유형'] == b_type].copy()
-
-        type_train_df.dropna(subset=[col for col in features if 'power_lag' in col], inplace=True)
+        # 해당 건물 유형의 데이터 필터링
+        train_b_type = train[train['건물유형'] == b_type].copy()
+        test_b_type = test[test['건물유형'] == b_type].copy()
         
-        if type_train_df.empty:
-            print(f"{b_type} 유형은 학습할 데이터가 충분하지 않습니다. 건너뜁니다.")
-            continue
+        X = train_b_type[features]
+        y = train_b_type[target]
+        X_test = test_b_type[features]
 
-        X_train = type_train_df[features]
-        y_train = type_train_df['전력소비량(kWh)']
-        X_test = type_test_df[features]
+        # 로그 변환
+        y_log = np.log1p(y)
 
-        # Convert to numpy array for GPU training stability
-        X_train_np = X_train.to_numpy()
-        y_train_np = y_train.to_numpy()
-        X_test_np = X_test.to_numpy()
-
-        # --- Data Sample Check Start ---
-        print(f"--- Checking data for GPU for building type: {b_type} ---")
-        print(f"X_train_np shape: {X_train_np.shape}, y_train_np shape: {y_train_np.shape}")
-        print("Sample of X_train_np (first 3 rows):")
-        print(X_train_np[:3])
-        print("\nSample of y_train_np (first 3 values):")
-        print(y_train_np[:3])
-        print("-----------------------------------------------------------\n")
-        # --- Data Sample Check End ---
-
-        # Find index of categorical features for lightgbm
-        categorical_feature_indices = [i for i, col in enumerate(X_train.columns) if col in categorical_features_for_model]
-
-        lgb_params = {
-            'objective': 'regression_l1',
-            'metric': 'mae',
-            'random_state': 42,
-            'device': 'cpu',
-            'n_estimators': 2000,
-            'learning_rate': 0.02,
-            'num_leaves': 32,
-            'max_depth': 8,
-            'colsample_bytree': 0.7,
-            'subsample': 0.7,
-            'reg_alpha': 0.1,
-            'reg_lambda': 0.1
-        }
-        
-        final_model = lgb.LGBMRegressor(**lgb_params)
-        final_model.fit(X_train_np, y_train_np, categorical_feature=categorical_feature_indices)
-        
-        if not X_test.empty:
-            preds = final_model.predict(X_test_np)
-            preds = np.expm1(preds)
-            preds[preds < 0] = 0
+        # K-Fold 교차 검증
+        for fold, (train_idx, val_idx) in enumerate(kf.split(X), 1):
+            print(f"  Fold {fold}/{KFOLD_SPLITS} 학습 시작...")
             
-            temp_submission = pd.DataFrame({'num_date_time': type_test_df['num_date_time'], 'answer': preds})
-            total_predictions.append(temp_submission)
+            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_train, y_val = y_log.iloc[train_idx], y_log.iloc[val_idx]
 
-    print("-----------------------------------------")
+            model = xgb.XGBRegressor(
+                learning_rate=0.05,
+                n_estimators=5000,
+                max_depth=10,
+                subsample=0.7,
+                colsample_bytree=0.7,
+                min_child_weight=3,
+                random_state=RANDOM_SEED,
+                objective=weighted_mse(alpha=3),
+                tree_method="gpu_hist",
+                gpu_id=0,
+                n_jobs=-1
+            )
 
-    print("결과 취합 및 저장 시작...")
-    if total_predictions:
-        final_submission = pd.concat(total_predictions, ignore_index=True)
-        
-        sample_submission = pd.read_csv('data/sample_submission.csv')
-        sample_submission = sample_submission.drop(columns=['answer'])
-        final_submission = pd.merge(sample_submission, final_submission, on='num_date_time', how='left')
-        
-        final_submission['answer'].fillna(0, inplace=True)
+            model.fit(
+                X_train, y_train,
+                eval_set=[(X_val, y_val)],
+                eval_metric=custom_smape_metric,
+                callbacks=[xgb.callback.EarlyStopping(rounds=100, save_best=True)],
+                verbose=False
+            )
+            
+            # 검증 데이터 예측 (Out-of-Fold)
+            val_preds = model.predict(X_val)
+            oof_preds[train_b_type.index[val_idx]] = np.expm1(val_preds)
 
-        final_submission.to_csv('method03/submission.csv', index=False)
-        print("method03/submission.csv 파일이 성공적으로 생성되었습니다.")
-    else:
-        print("예측이 생성되지 않았습니다.")
+            # 테스트 데이터 예측 (앙상블)
+            test_preds_fold = model.predict(X_test)
+            test_preds[test_b_type.index] += np.expm1(test_preds_fold) / KFOLD_SPLITS
+
+    # 전체 OOF SMAPE 계산
+    total_smape = smape(train[target], oof_preds)
+    print(f"\n--- 최종 OOF SMAPE: {total_smape:.4f} ---")
+
+    print("4. 제출 파일 생성...")
+    submission = pd.read_csv('data/sample_submission.csv')
+    submission['answer'] = test_preds
+    submission.to_csv('method03/submission.csv', index=False)
+    print("submission.csv 파일이 성공적으로 생성되었습니다.")
 
 if __name__ == '__main__':
     main()
