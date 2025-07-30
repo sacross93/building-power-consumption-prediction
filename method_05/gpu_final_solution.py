@@ -395,6 +395,19 @@ def gpu_validation_and_predict():
     print("MAKING GPU PREDICTIONS")
     print("=" * 60)
     
+    # Handle feature mismatch between train and test
+    test_feature_cols = [col for col in feature_cols if col in test_enhanced.columns]
+    missing_features = [col for col in feature_cols if col not in test_enhanced.columns]
+    
+    if missing_features:
+        print(f"Missing features in test data: {missing_features}")
+        print("Adding missing features with default values...")
+        for col in missing_features:
+            if 'lag' in col or 'rolling' in col:
+                test_enhanced[col] = 1000.0  # Default power value
+            else:
+                test_enhanced[col] = 0.0  # Default for other features
+    
     X_test = test_enhanced[feature_cols].copy()
     
     # Apply same encoding to test data
