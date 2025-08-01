@@ -96,7 +96,6 @@ class AdvancedFE:
 
     def _build_clusters(self, df: pd.DataFrame):
         feats = ["total_area", "cooling_area", "pv_capacity"]
-                feats = ["total_area", "cooling_area", "pv_capacity"]
         tmp = (df.groupby("building_id")[feats]
                   .median()
                   .apply(np.log1p))
