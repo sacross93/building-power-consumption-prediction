@@ -36,7 +36,7 @@ class UltimateTuningSolution:
     
     def __init__(self, quick_mode=False, max_trials=None):
         self.quick_mode = quick_mode  # 빠른 테스트용
-        self.max_trials = max_trials or (20 if quick_mode else 50)  # trial 수 설정
+        self.max_trials = max_trials or (20 if quick_mode else 100)  # trial 수 대폭 증가
         self.best_params = {}
         self.best_models = {}
         self.validation_results = {}
@@ -75,15 +75,19 @@ class UltimateTuningSolution:
         # XGBoost 최적화
         def xgb_objective(trial):
             params = {
-                'max_depth': trial.suggest_int('max_depth', 5, 10),
-                'n_estimators': trial.suggest_int('n_estimators', 300, 800, step=100),
-                'learning_rate': trial.suggest_float('learning_rate', 0.03, 0.15),
-                'subsample': trial.suggest_float('subsample', 0.7, 0.9),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.7, 0.9),
-                'reg_alpha': trial.suggest_float('reg_alpha', 0.5, 3.0),
-                'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3.0),
+                'max_depth': trial.suggest_int('max_depth', 8, 15),  # 더 깊은 트리
+                'n_estimators': trial.suggest_int('n_estimators', 800, 2000, step=200),  # 더 많은 트리
+                'learning_rate': trial.suggest_float('learning_rate', 0.02, 0.1),  # 더 정교한 학습
+                'subsample': trial.suggest_float('subsample', 0.7, 0.95),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.9),
+                'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.6, 0.9),  # 추가 파라미터
+                'colsample_bynode': trial.suggest_float('colsample_bynode', 0.6, 0.9),   # 추가 파라미터
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.1, 5.0),
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.1, 5.0),
+                'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),  # 추가 파라미터
                 'tree_method': 'gpu_hist',  # GPU 가속
                 'gpu_id': 0,
+                'max_bin': 512,  # GPU 메모리 활용도 증가
                 'random_state': 42,
                 'verbosity': 0
             }
@@ -93,16 +97,21 @@ class UltimateTuningSolution:
         # LightGBM 최적화
         def lgb_objective(trial):
             params = {
-                'max_depth': trial.suggest_int('max_depth', 5, 10),
-                'n_estimators': trial.suggest_int('n_estimators', 300, 800, step=100),
-                'learning_rate': trial.suggest_float('learning_rate', 0.03, 0.15),
-                'subsample': trial.suggest_float('subsample', 0.7, 0.9),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.7, 0.9),
-                'reg_alpha': trial.suggest_float('reg_alpha', 0.5, 3.0),
-                'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3.0),
-                'num_leaves': trial.suggest_int('num_leaves', 50, 200),
+                'max_depth': trial.suggest_int('max_depth', 10, 20),  # 더 깊은 트리
+                'n_estimators': trial.suggest_int('n_estimators', 1000, 3000, step=500),  # 더 많은 트리
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.08),  # 더 정교한 학습
+                'subsample': trial.suggest_float('subsample', 0.7, 0.95),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.9),
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.1, 5.0),
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.1, 5.0),
+                'num_leaves': trial.suggest_int('num_leaves', 200, 1000),  # 더 많은 잎
+                'min_child_samples': trial.suggest_int('min_child_samples', 5, 50),  # 추가 파라미터
+                'min_child_weight': trial.suggest_float('min_child_weight', 0.001, 0.1),  # 추가 파라미터
+                'bagging_freq': trial.suggest_int('bagging_freq', 1, 10),  # 추가 파라미터
+                'feature_fraction': trial.suggest_float('feature_fraction', 0.6, 0.9),  # 추가 파라미터
                 'device': 'gpu',  # GPU 가속
                 'gpu_use_dp': True,
+                'max_bin': 1023,  # GPU 메모리 활용도 증가
                 'random_state': 42,
                 'verbosity': -1
             }
@@ -112,14 +121,19 @@ class UltimateTuningSolution:
         # CatBoost 최적화
         def cb_objective(trial):
             params = {
-                'depth': trial.suggest_int('depth', 5, 10),
-                'iterations': trial.suggest_int('iterations', 300, 800, step=100),
-                'learning_rate': trial.suggest_float('learning_rate', 0.03, 0.15),
+                'depth': trial.suggest_int('depth', 8, 16),  # 더 깊은 트리
+                'iterations': trial.suggest_int('iterations', 1000, 3000, step=500),  # 더 많은 반복
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1),  # 더 정교한 학습
                 'bootstrap_type': 'Bernoulli',  # subsample과 호환되는 bootstrap 타입
-                'subsample': trial.suggest_float('subsample', 0.7, 0.9),
-                'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3.0),
-                'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 5, 50),
+                'subsample': trial.suggest_float('subsample', 0.7, 0.95),
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.1, 10.0),
+                'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 1, 20),
+                'max_leaves': trial.suggest_int('max_leaves', 256, 2048),  # 더 많은 잎
+                'border_count': trial.suggest_int('border_count', 128, 512),  # 추가 파라미터
+                'feature_border_type': 'GreedyLogSum',  # GPU 최적화
+                'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),  # 추가 파라미터
                 'task_type': 'GPU',  # GPU 가속
+                'gpu_ram_part': 0.8,  # GPU 메모리 활용도 증가
                 'random_seed': 42,
                 'verbose': False
             }
@@ -442,8 +456,8 @@ class UltimateTuningSolution:
 
 
 if __name__ == "__main__":
-    # 고성능 최적화 모드 (GPU 서버용)
-    solution = UltimateTuningSolution(quick_mode=False, max_trials=50)  # 더 많은 trial
+    # 고성능 최적화 모드 (GPU 서버용 - VRAM 최대 활용)
+    solution = UltimateTuningSolution(quick_mode=False, max_trials=100)  # VRAM 최대 활용
     results, best_model = solution.run_ultimate_tuning()
     
     print(f"\n🎯 Ultimate tuning solution completed!")
