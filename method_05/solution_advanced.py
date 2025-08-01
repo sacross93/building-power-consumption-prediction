@@ -218,7 +218,7 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         ]
     )
     
-    # 1. 더 깊은 XGBoost (상세 로그 활성화)
+    # 1. XGBoost → GPU 0 (상세 로그 활성화)
     xgb_model = xgb.XGBRegressor(
         max_depth=15,  # 더 깊게
         n_estimators=2500,  # 더 많은 트리
@@ -233,12 +233,12 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         gamma=0.1,
         objective='reg:squarederror',
         tree_method='gpu_hist',
-        gpu_id=0,
+        gpu_id=0,  # GPU 0 전용
         verbosity=1,  # 로그 활성화
         random_state=42,
     )
     
-    # 2. 더 깊은 LightGBM (상세 로그 활성화)
+    # 2. LightGBM → GPU 1 (상세 로그 활성화)
     lgb_model = lgb.LGBMRegressor(
         max_depth=20,  # 더 깊게
         n_estimators=3000,  # 더 많은 트리
@@ -251,12 +251,13 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         min_child_samples=10,
         min_child_weight=0.01,
         device='gpu',
+        gpu_device_id=1,  # GPU 1 전용
         gpu_use_dp=True,
         verbosity=1,  # 로그 활성화
         random_state=42
     )
     
-    # 3. 더 깊은 CatBoost (lossguide 설정, 상세 로그 활성화)
+    # 3. CatBoost → GPU 2 (lossguide 설정, 상세 로그 활성화)
     cat_model = cb.CatBoostRegressor(
         depth=12,  # 더 깊게
         iterations=2000,  # 더 많은 반복
@@ -268,7 +269,8 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         grow_policy='Lossguide',  # max_leaves 사용을 위한 설정
         max_leaves=1000,  # 더 많은 잎
         task_type='GPU',
-        gpu_ram_part=0.7,
+        devices='2',  # GPU 2 전용
+        gpu_ram_part=0.6,  # 메모리 사용량 줄임
         verbose=100,  # 100 iteration마다 로그 출력
         random_seed=42
     )
@@ -282,7 +284,7 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
     
     print(f"Training: {X_train.shape}, Validation: {X_val.shape}")
     
-    # GPU 모니터링 시작
+    # 멀티 GPU 모니터링 시작
     training_active = True
     def monitor_gpu():
         while training_active:
@@ -290,7 +292,11 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
                 result = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used', '--format=csv,noheader,nounits'], 
                                       capture_output=True, text=True, timeout=5)
                 gpu_info = result.stdout.strip().split('\n')
-                print(f"📊 GPU Status: {gpu_info[0]} | Memory: {gpu_info[0].split(',')[1].strip()}MB")
+                print("📊 Multi-GPU Status:")
+                for i, info in enumerate(gpu_info[:4]):  # 4개 GPU만 표시
+                    util, mem = info.split(',')
+                    model_name = ["XGBoost", "LightGBM", "CatBoost", "Reserved"][i] if i < 4 else "Extra"
+                    print(f"  GPU {i} ({model_name}): {util.strip()}% | {mem.strip()}MB")
             except:
                 pass
             time.sleep(30)  # 30초마다 체크
@@ -299,9 +305,9 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
     monitor_thread.daemon = True
     monitor_thread.start()
     
-    # 단계별 모델 학습
+    # 멀티 GPU 병렬 학습
     print("\n" + "="*60)
-    print("🚀 STEP 1/4: Training XGBoost (depth=15, trees=2500)")
+    print("🚀 STEP 1/4: Training XGBoost on GPU 0 (depth=15, trees=2500)")
     print("="*60)
     start_time = time.time()
     
@@ -309,10 +315,10 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
     xgb_pipeline.fit(X_train, y_train)
     
     xgb_time = time.time() - start_time
-    print(f"✅ XGBoost completed in {xgb_time:.1f}s")
+    print(f"✅ XGBoost on GPU 0 completed in {xgb_time:.1f}s")
     
     print("\n" + "="*60)
-    print("🚀 STEP 2/4: Training LightGBM (depth=20, trees=3000)")
+    print("🚀 STEP 2/4: Training LightGBM on GPU 1 (depth=20, trees=3000)")
     print("="*60)
     start_time = time.time()
     
@@ -320,10 +326,10 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
     lgb_pipeline.fit(X_train, y_train)
     
     lgb_time = time.time() - start_time
-    print(f"✅ LightGBM completed in {lgb_time:.1f}s")
+    print(f"✅ LightGBM on GPU 1 completed in {lgb_time:.1f}s")
     
     print("\n" + "="*60)
-    print("🚀 STEP 3/4: Training CatBoost (depth=12, iter=2000)")
+    print("🚀 STEP 3/4: Training CatBoost on GPU 2 (depth=12, iter=2000)")
     print("="*60)
     start_time = time.time()
     
@@ -331,7 +337,7 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
     cat_pipeline.fit(X_train, y_train)
     
     cat_time = time.time() - start_time
-    print(f"✅ CatBoost completed in {cat_time:.1f}s")
+    print(f"✅ CatBoost on GPU 2 completed in {cat_time:.1f}s")
     
     print("\n" + "="*60)
     print("🚀 STEP 4/4: Building Stacking Ensemble")
