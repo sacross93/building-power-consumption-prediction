@@ -114,6 +114,7 @@ class UltimateTuningSolution:
                 'depth': trial.suggest_int('depth', 5, 10),
                 'iterations': trial.suggest_int('iterations', 300, 800, step=100),
                 'learning_rate': trial.suggest_float('learning_rate', 0.03, 0.15),
+                'bootstrap_type': 'Bernoulli',  # subsample과 호환되는 bootstrap 타입
                 'subsample': trial.suggest_float('subsample', 0.7, 0.9),
                 'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3.0),
                 'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 5, 50),
@@ -163,7 +164,7 @@ class UltimateTuningSolution:
         self.best_models['lightgbm'] = lgb.LGBMRegressor(**lgb_params)
         
         cb_params = self.best_params['catboost'].copy()
-        cb_params.update({'task_type': 'GPU'})
+        cb_params.update({'task_type': 'GPU', 'bootstrap_type': 'Bernoulli'})
         self.best_models['catboost'] = cb.CatBoostRegressor(**cb_params)
         
         # 앙상블 모델들
@@ -375,9 +376,9 @@ class UltimateTuningSolution:
             train_df, test_df
         )
         
-        # 3. 개선된 전처리 적용 (StandardScaler 사용)
+        # 3. 개선된 전처리 적용 (RobustScaler - 성능 검증됨)
         print("\n3. Applying improved preprocessing...")
-        preprocessor = ImprovedPreprocessor(scaler_type='standard')  # StandardScaler로 변경
+        preprocessor = ImprovedPreprocessor(scaler_type='robust')  # RobustScaler로 복원
         X_train, X_test, y_train = preprocessor.fit_transform(train_advanced, test_advanced)
         
         # datetime 시리즈 (교차검증용)
@@ -440,8 +441,8 @@ class UltimateTuningSolution:
 
 
 if __name__ == "__main__":
-    # 빠른 테스트용
-    solution = UltimateTuningSolution(quick_mode=True)
+    # 고성능 최적화 모드 (GPU 서버용)
+    solution = UltimateTuningSolution(quick_mode=False, max_trials=50)  # 더 많은 trial
     results, best_model = solution.run_ultimate_tuning()
     
     print(f"\n🎯 Ultimate tuning solution completed!")
