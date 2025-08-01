@@ -251,7 +251,7 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         verbosity=-1
     )
     
-    # 3. 더 깊은 CatBoost
+    # 3. 더 깊은 CatBoost (lossguide 설정)
     cat_model = cb.CatBoostRegressor(
         depth=12,  # 더 깊게
         iterations=2000,  # 더 많은 반복
@@ -260,6 +260,7 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         subsample=0.8,
         reg_lambda=3.0,
         min_data_in_leaf=5,
+        grow_policy='Lossguide',  # max_leaves 사용을 위한 설정
         max_leaves=1000,  # 더 많은 잎
         task_type='GPU',
         gpu_ram_part=0.7,
