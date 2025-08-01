@@ -34,8 +34,9 @@ from advanced_feature_engineering import AdvancedFeatureEngineer
 class UltimateTuningSolution:
     """최종 튜닝 솔루션 클래스."""
     
-    def __init__(self, quick_mode=False):
+    def __init__(self, quick_mode=False, max_trials=None):
         self.quick_mode = quick_mode  # 빠른 테스트용
+        self.max_trials = max_trials or (20 if quick_mode else 50)  # trial 수 설정
         self.best_params = {}
         self.best_models = {}
         self.validation_results = {}
@@ -126,7 +127,7 @@ class UltimateTuningSolution:
             return cross_validate_model(model, X, y, splits)
         
         # 각 모델 최적화 실행
-        n_trials = 20 if self.quick_mode else 50
+        n_trials = self.max_trials
         
         print("  Optimizing XGBoost...")
         xgb_study = optuna.create_study(direction='minimize')
