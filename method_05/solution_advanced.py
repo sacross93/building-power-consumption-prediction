@@ -17,6 +17,10 @@ from sklearn.ensemble import VotingRegressor, StackingRegressor
 from sklearn.linear_model import Ridge
 import matplotlib.pyplot as plt
 import seaborn as sns
+import time
+import subprocess
+import threading
+from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -214,7 +218,7 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         ]
     )
     
-    # 1. 더 깊은 XGBoost
+    # 1. 더 깊은 XGBoost (상세 로그 활성화)
     xgb_model = xgb.XGBRegressor(
         max_depth=15,  # 더 깊게
         n_estimators=2500,  # 더 많은 트리
@@ -230,10 +234,11 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         objective='reg:squarederror',
         tree_method='gpu_hist',
         gpu_id=0,
+        verbosity=1,  # 로그 활성화
         random_state=42,
     )
     
-    # 2. 더 깊은 LightGBM
+    # 2. 더 깊은 LightGBM (상세 로그 활성화)
     lgb_model = lgb.LGBMRegressor(
         max_depth=20,  # 더 깊게
         n_estimators=3000,  # 더 많은 트리
@@ -247,11 +252,11 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         min_child_weight=0.01,
         device='gpu',
         gpu_use_dp=True,
-        random_state=42,
-        verbosity=-1
+        verbosity=1,  # 로그 활성화
+        random_state=42
     )
     
-    # 3. 더 깊은 CatBoost (lossguide 설정)
+    # 3. 더 깊은 CatBoost (lossguide 설정, 상세 로그 활성화)
     cat_model = cb.CatBoostRegressor(
         depth=12,  # 더 깊게
         iterations=2000,  # 더 많은 반복
@@ -264,19 +269,8 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
         max_leaves=1000,  # 더 많은 잎
         task_type='GPU',
         gpu_ram_part=0.7,
-        random_seed=42,
-        verbose=False
-    )
-    
-    # 4. Stacking Ensemble (더 복잡한 메타러너)
-    stacking_model = StackingRegressor(
-        estimators=[
-            ('xgb', Pipeline([('preprocess', preprocessor), ('model', xgb_model)])),
-            ('lgb', Pipeline([('preprocess', preprocessor), ('model', lgb_model)])),
-            ('cat', Pipeline([('preprocess', preprocessor), ('model', cat_model)]))
-        ],
-        final_estimator=Ridge(alpha=10.0),  # 정규화된 메타러너
-        cv=3
+        verbose=100,  # 100 iteration마다 로그 출력
+        random_seed=42
     )
     
     # 검증 분할
@@ -288,23 +282,126 @@ def build_deep_ensemble(train: pd.DataFrame, test: pd.DataFrame, output_dir: Pat
     
     print(f"Training: {X_train.shape}, Validation: {X_val.shape}")
     
-    # 모델 학습
-    print("Training deep stacking ensemble...")
+    # GPU 모니터링 시작
+    training_active = True
+    def monitor_gpu():
+        while training_active:
+            try:
+                result = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used', '--format=csv,noheader,nounits'], 
+                                      capture_output=True, text=True, timeout=5)
+                gpu_info = result.stdout.strip().split('\n')
+                print(f"📊 GPU Status: {gpu_info[0]} | Memory: {gpu_info[0].split(',')[1].strip()}MB")
+            except:
+                pass
+            time.sleep(30)  # 30초마다 체크
+    
+    monitor_thread = threading.Thread(target=monitor_gpu)
+    monitor_thread.daemon = True
+    monitor_thread.start()
+    
+    # 단계별 모델 학습
+    print("\n" + "="*60)
+    print("🚀 STEP 1/4: Training XGBoost (depth=15, trees=2500)")
+    print("="*60)
+    start_time = time.time()
+    
+    xgb_pipeline = Pipeline([('preprocess', preprocessor), ('model', xgb_model)])
+    xgb_pipeline.fit(X_train, y_train)
+    
+    xgb_time = time.time() - start_time
+    print(f"✅ XGBoost completed in {xgb_time:.1f}s")
+    
+    print("\n" + "="*60)
+    print("🚀 STEP 2/4: Training LightGBM (depth=20, trees=3000)")
+    print("="*60)
+    start_time = time.time()
+    
+    lgb_pipeline = Pipeline([('preprocess', preprocessor), ('model', lgb_model)])
+    lgb_pipeline.fit(X_train, y_train)
+    
+    lgb_time = time.time() - start_time
+    print(f"✅ LightGBM completed in {lgb_time:.1f}s")
+    
+    print("\n" + "="*60)
+    print("🚀 STEP 3/4: Training CatBoost (depth=12, iter=2000)")
+    print("="*60)
+    start_time = time.time()
+    
+    cat_pipeline = Pipeline([('preprocess', preprocessor), ('model', cat_model)])
+    cat_pipeline.fit(X_train, y_train)
+    
+    cat_time = time.time() - start_time
+    print(f"✅ CatBoost completed in {cat_time:.1f}s")
+    
+    print("\n" + "="*60)
+    print("🚀 STEP 4/4: Building Stacking Ensemble")
+    print("="*60)
+    start_time = time.time()
+    
+    # 4. Stacking Ensemble (더 복잡한 메타러너)
+    stacking_model = StackingRegressor(
+        estimators=[
+            ('xgb', xgb_pipeline),
+            ('lgb', lgb_pipeline),
+            ('cat', cat_pipeline)
+        ],
+        final_estimator=Ridge(alpha=10.0),  # 정규화된 메타러너
+        cv=3
+    )
+    
     stacking_model.fit(X_train, y_train)
     
+    stack_time = time.time() - start_time
+    print(f"✅ Stacking Ensemble completed in {stack_time:.1f}s")
+    
+    total_time = xgb_time + lgb_time + cat_time + stack_time
+    print(f"\n🎯 Total training time: {total_time:.1f}s ({total_time/60:.1f}m)")
+    
+    # GPU 모니터링 중지
+    training_active = False
+    
     # 검증
+    print("\n" + "="*60)
+    print("📊 VALIDATION & ANALYSIS")
+    print("="*60)
+    
+    print("🔍 Computing validation predictions...")
     val_pred = stacking_model.predict(X_val)
     val_smape = smape(y_val.values, val_pred)
     
-    print(f"Validation SMAPE: {val_smape:.4f}")
+    print(f"📈 Validation SMAPE: {val_smape:.4f}")
+    print(f"🎯 Target SMAPE: 5-6")
+    print(f"📊 Improvement needed: {val_smape - 6:.2f} points")
+    
+    # 개별 모델 성능도 확인
+    print("\n🔍 Individual model performance:")
+    xgb_val_pred = xgb_pipeline.predict(X_val)
+    lgb_val_pred = lgb_pipeline.predict(X_val)
+    cat_val_pred = cat_pipeline.predict(X_val)
+    
+    xgb_smape = smape(y_val.values, xgb_val_pred)
+    lgb_smape = smape(y_val.values, lgb_val_pred)
+    cat_smape = smape(y_val.values, cat_val_pred)
+    
+    print(f"  XGBoost SMAPE: {xgb_smape:.4f}")
+    print(f"  LightGBM SMAPE: {lgb_smape:.4f}")
+    print(f"  CatBoost SMAPE: {cat_smape:.4f}")
+    print(f"  Ensemble SMAPE: {val_smape:.4f}")
     
     # 피처 중요도 분석
-    print("Analyzing feature importance...")
+    print("\n🔍 Analyzing feature importance...")
     analyze_feature_importance(stacking_model, feature_cols, categorical_features, output_dir)
     
     # 최종 학습
-    print("Final training on full dataset...")
+    print("\n" + "="*60)
+    print("🏁 FINAL TRAINING ON FULL DATASET")
+    print("="*60)
+    final_start = time.time()
+    
     stacking_model.fit(X, y)
+    
+    final_time = time.time() - final_start
+    print(f"✅ Final training completed in {final_time:.1f}s")
     
     # 예측
     test_pred = stacking_model.predict(X_test)
