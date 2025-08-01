@@ -33,53 +33,8 @@ def check_gpu_availability():
         "gpu_available": False
     }
     
-    # CUDA 체크 (nvidia-ml-py 대신 직접 체크)
-    cuda_available = False
-    try:
-        # CUDA 라이브러리 경로 체크
-        cuda_paths = ["/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu"]
-        for path in cuda_paths:
-            if os.path.exists(f"{path}/libcuda.so") or os.path.exists(f"{path}/libcuda.so.1"):
-                cuda_available = True
-                break
-        
-        if cuda_available:
-            print("🎯 CUDA 라이브러리 발견")
-            gpu_info["xgb_tree_method"] = "gpu_hist"
-            gpu_info["catboost_task_type"] = "GPU"
-            gpu_info["gpu_available"] = True
-            
-            # LightGBM은 OpenCL 백엔드로 시도 (CUDA 빌드 문제 회피)
-            gpu_info["lightgbm_device"] = "gpu"  # OpenCL 백엔드 우선 시도
-        else:
-            print("⚠️ CUDA 라이브러리 없음")
-    except Exception as e:
-        print(f"⚠️ CUDA 체크 실패: {e}")
-    
-    # OpenCL 체크
-    try:
-        import pyopencl as cl
-        platforms = cl.get_platforms()
-        if platforms:
-            devices = []
-            for platform in platforms:
-                try:
-                    platform_devices = platform.get_devices(cl.device_type.GPU)
-                    devices.extend(platform_devices)
-                except:
-                    pass
-            
-            if devices:
-                print(f"🎯 OpenCL GPU 발견: {len(devices)}개 디바이스")
-                gpu_info["lightgbm_device"] = "gpu"
-                gpu_info["gpu_available"] = True
-            else:
-                print("⚠️ OpenCL GPU 디바이스 없음")
-    except ImportError:
-        print("⚠️ pyopencl 없음 - OpenCL GPU 사용 불가")
-    except Exception as e:
-        print(f"⚠️ OpenCL 체크 실패: {e}")
-    
+    # GPU 환경 문제로 CPU 모드로 강제 설정
+    print("🔧 GPU 환경 문제로 CPU 모드로 실행")
     return gpu_info
 
 ############################################################
@@ -398,18 +353,37 @@ def main(train_path: str, test_path: str, submission_path: str):
         smape_cat = smape_np(np.expm1(y_val), np.expm1(pred_val[:, 2]))
         print(f"   SMAPE – LGB {smape_lgb:.3f} | XGB {smape_xgb:.3f} | CAT {smape_cat:.3f}")
 
-    # Meta model (ElasticNet)
-    print("\n🔗 스태킹 메타 모델 학습 (ElasticNetCV)...")
-    # 더 넓은 l1_ratio 범위와 CV 증가
-    enet = ElasticNetCV(l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9], cv=5, random_state=SEED)
-    enet.fit(oof_preds, y)
-    oof_meta = enet.predict(oof_preds)
+    # Meta model (LinearRegression)
+    print("\n🔗 스태킹 메타 모델 학습 (LinearRegression)...")
+    from sklearn.linear_model import LinearRegression
+    
+    # 디버깅: Base model 예측값들의 분포 확인
+    print(f"  📊 Base model predictions stats:")
+    print(f"     OOF preds shape: {oof_preds.shape}")
+    print(f"     LGB mean/std: {oof_preds[:, 0].mean():.3f}/{oof_preds[:, 0].std():.3f}")
+    print(f"     XGB mean/std: {oof_preds[:, 1].mean():.3f}/{oof_preds[:, 1].std():.3f}")
+    print(f"     CAT mean/std: {oof_preds[:, 2].mean():.3f}/{oof_preds[:, 2].std():.3f}")
+    
+    meta_model = LinearRegression()
+    meta_model.fit(oof_preds, y)
+    oof_meta = meta_model.predict(oof_preds)
+    
+    # 메타 모델 계수 확인
+    print(f"  📈 Meta model coefficients: LGB={meta_model.coef_[0]:.3f}, XGB={meta_model.coef_[1]:.3f}, CAT={meta_model.coef_[2]:.3f}")
+    print(f"  📈 Meta model intercept: {meta_model.intercept_:.3f}")
+    
     # SMAPE를 log 공간에서 계산 (원래 공간 변환시 스케일 문제)
     score_meta = smape_np(y, oof_meta)
     print(f"✅ Meta SMAPE: {score_meta:.3f}%")
 
     # Test meta predictions
-    test_meta = enet.predict(test_preds)
+    test_meta = meta_model.predict(test_preds)
+    
+    # 디버깅: Test 예측값 분포 확인
+    print(f"  📊 Test meta predictions:")
+    print(f"     Test preds shape: {test_preds.shape}")
+    print(f"     Test meta mean/std: {test_meta.mean():.3f}/{test_meta.std():.3f}")
+    print(f"     Test meta min/max: {test_meta.min():.3f}/{test_meta.max():.3f}")
     # log_power = log1p(전력소비량)이므로 expm1로 역변환하면 됨
     # 연면적을 곱할 필요 없음 (이미 전력소비량 자체를 예측)
     final_pred_kwh = np.expm1(test_meta)

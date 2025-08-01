@@ -133,7 +133,11 @@ class AdvancedFeatureEngineer:
             
             # 온도 변화율 (전 시간 대비)
             df['temp_change'] = df.groupby('건물번호')['temp'].diff().fillna(0)
-            df['temp_volatility'] = df.groupby('건물번호')['temp'].rolling(24, min_periods=1).std().fillna(0)
+            
+            # 온도 변동성 (rolling std) - 인덱스 문제 해결
+            temp_volatility = df.groupby('건물번호')['temp'].rolling(24, min_periods=1).std()
+            temp_volatility.index = temp_volatility.index.droplevel(0)  # 멀티인덱스 제거
+            df['temp_volatility'] = temp_volatility.reindex(df.index).fillna(0)
             
             # 습도 범주
             df['humidity_comfort'] = pd.cut(df['humidity'], 
@@ -168,10 +172,18 @@ class AdvancedFeatureEngineer:
         
         # 건물 효율성 지표
         if 'total_area' in df.columns and 'pv_capacity' in df.columns:
+            # power_mean 계산 (rolling operation safe handling)
+            if '전력소비량(kWh)' in df.columns:
+                power_mean = df.groupby('건물번호')['전력소비량(kWh)'].rolling(24*7, min_periods=1).mean()
+                power_mean.index = power_mean.index.droplevel(0)
+                power_mean = power_mean.reindex(df.index).fillna(df.get('전력소비량(kWh)', 0))
+            else:
+                power_mean = df.get('power_mean', 0)
+            
             df['building_efficiency_score'] = (
                 df['pv_capacity'] / np.maximum(df['total_area'], 1) * 1000 +
                 df.get('area_ratio', 0) * 100 -
-                df.get('power_mean', df.get('전력소비량(kWh)', 0).rolling(24*7, min_periods=1).mean()) / 1000
+                power_mean / 1000
             )
             
             df['green_building_score'] = (df['pv_capacity'] > 0).astype(int) * 2 + \

@@ -224,9 +224,15 @@ class ImprovedPreprocessor:
         print("IMPROVED PREPROCESSING PIPELINE")
         print("=" * 80)
         
-        # 1. 기본 피처 엔지니어링 (기존 solution.py)
+        # 1. 기본 피처 엔지니어링 (기존 solution.py) - 이미 적용된 경우 건너뛰기
         print("1. Basic feature engineering...")
-        train_processed, test_processed = engineer_features(train_df.copy(), test_df.copy())
+        if 'sunshine_est' in train_df.columns:
+            # 이미 고급 피처 엔지니어링이 적용된 데이터
+            print("   Already processed data detected, skipping basic FE...")
+            train_processed, test_processed = train_df.copy(), test_df.copy()
+        else:
+            # 원본 데이터, 기본 피처 엔지니어링 적용
+            train_processed, test_processed = engineer_features(train_df.copy(), test_df.copy())
         
         # 2. 고급 피처 엔지니어링
         print("2. Advanced feature engineering...")
