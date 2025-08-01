@@ -96,11 +96,16 @@ class AdvancedFE:
 
     def _build_clusters(self, df: pd.DataFrame):
         feats = ["total_area", "cooling_area", "pv_capacity"]
-        tmp = df.groupby("building_id")[feats].median().apply(np.log1p).fillna(lambda s: s.median())
+                feats = ["total_area", "cooling_area", "pv_capacity"]
+        tmp = (df.groupby("building_id")[feats]
+                  .median()
+                  .apply(np.log1p))
+        # NaN → 컬럼별 중앙값으로
+        tmp = tmp.fillna(tmp.median())
         from sklearn.preprocessing import StandardScaler
         from sklearn.cluster import KMeans
         km = KMeans(n_clusters=5, random_state=42, n_init=10)
-        self.clusters = dict(zip(tmp.index, km.fit_predict(StandardScaler().fit_transform(tmp))))
+        self.clusters = dict(zip(tmp.index, km.fit_predict(StandardScaler().fit_transform(tmp)))) = dict(zip(tmp.index, km.fit_predict(StandardScaler().fit_transform(tmp))))
 
     def _transform_one(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
