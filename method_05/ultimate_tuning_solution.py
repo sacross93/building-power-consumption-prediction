@@ -81,6 +81,8 @@ class UltimateTuningSolution:
                 'colsample_bytree': trial.suggest_float('colsample_bytree', 0.7, 0.9),
                 'reg_alpha': trial.suggest_float('reg_alpha', 0.5, 3.0),
                 'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3.0),
+                'tree_method': 'gpu_hist',  # GPU 가속
+                'gpu_id': 0,
                 'random_state': 42,
                 'verbosity': 0
             }
@@ -98,6 +100,8 @@ class UltimateTuningSolution:
                 'reg_alpha': trial.suggest_float('reg_alpha', 0.5, 3.0),
                 'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3.0),
                 'num_leaves': trial.suggest_int('num_leaves', 50, 200),
+                'device': 'gpu',  # GPU 가속
+                'gpu_use_dp': True,
                 'random_state': 42,
                 'verbosity': -1
             }
@@ -113,6 +117,7 @@ class UltimateTuningSolution:
                 'subsample': trial.suggest_float('subsample', 0.7, 0.9),
                 'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3.0),
                 'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 5, 50),
+                'task_type': 'GPU',  # GPU 가속
                 'random_seed': 42,
                 'verbose': False
             }
@@ -148,10 +153,18 @@ class UltimateTuningSolution:
         """최적화된 모델들 생성."""
         print("🔧 Creating optimized models...")
         
-        # 개별 최적화된 모델들
-        self.best_models['xgboost'] = xgb.XGBRegressor(**self.best_params['xgboost'])
-        self.best_models['lightgbm'] = lgb.LGBMRegressor(**self.best_params['lightgbm'])
-        self.best_models['catboost'] = cb.CatBoostRegressor(**self.best_params['catboost'])
+        # 개별 최적화된 모델들 (GPU 설정 포함)
+        xgb_params = self.best_params['xgboost'].copy()
+        xgb_params.update({'tree_method': 'gpu_hist', 'gpu_id': 0})
+        self.best_models['xgboost'] = xgb.XGBRegressor(**xgb_params)
+        
+        lgb_params = self.best_params['lightgbm'].copy()
+        lgb_params.update({'device': 'gpu', 'gpu_use_dp': True})
+        self.best_models['lightgbm'] = lgb.LGBMRegressor(**lgb_params)
+        
+        cb_params = self.best_params['catboost'].copy()
+        cb_params.update({'task_type': 'GPU'})
+        self.best_models['catboost'] = cb.CatBoostRegressor(**cb_params)
         
         # 앙상블 모델들
         self.best_models['voting_ensemble'] = VotingRegressor([
@@ -362,9 +375,9 @@ class UltimateTuningSolution:
             train_df, test_df
         )
         
-        # 3. 개선된 전처리 적용
+        # 3. 개선된 전처리 적용 (StandardScaler 사용)
         print("\n3. Applying improved preprocessing...")
-        preprocessor = ImprovedPreprocessor()
+        preprocessor = ImprovedPreprocessor(scaler_type='standard')  # StandardScaler로 변경
         X_train, X_test, y_train = preprocessor.fit_transform(train_advanced, test_advanced)
         
         # datetime 시리즈 (교차검증용)

@@ -13,7 +13,7 @@ Improved Data Preprocessing Based on Visualization Analysis
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler, QuantileTransformer
 from sklearn.feature_selection import SelectKBest, f_regression
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 import matplotlib.pyplot as plt
@@ -27,7 +27,14 @@ from solution import load_data, engineer_features
 class ImprovedPreprocessor:
     """개선된 전처리 클래스."""
     
-    def __init__(self):
+    def __init__(self, scaler_type='standard'):
+        """
+        Parameters:
+        -----------
+        scaler_type : str
+            'standard' (기본값), 'robust', 'minmax', 'quantile' 중 선택
+        """
+        self.scaler_type = scaler_type
         self.scaler = None
         self.selected_features = None
         self.outlier_bounds = {}
@@ -76,13 +83,29 @@ class ImprovedPreprocessor:
                 break
                 
             try:
+                # 숫자형 데이터만 필터링하고 무한값/NaN 처리
+                X_vif = X_numeric[features_to_keep].copy()
+                
+                # 무한값과 NaN을 0으로 대체
+                X_vif = X_vif.replace([np.inf, -np.inf], np.nan).fillna(0)
+                
+                # 상수 컬럼 제거 (분산이 0인 컬럼)
+                constant_cols = X_vif.columns[X_vif.var() == 0].tolist()
+                if constant_cols:
+                    features_to_keep = [f for f in features_to_keep if f not in constant_cols]
+                    print(f"Removed constant columns: {constant_cols}")
+                    continue
+                
                 # VIF 계산
                 vif_df = pd.DataFrame()
                 vif_df["Feature"] = features_to_keep
                 vif_df["VIF"] = [
-                    variance_inflation_factor(X_numeric[features_to_keep].values, i) 
+                    variance_inflation_factor(X_vif.values, i) 
                     for i in range(len(features_to_keep))
                 ]
+                
+                # 무한값 VIF 처리
+                vif_df["VIF"] = vif_df["VIF"].replace([np.inf, -np.inf], 999999)
                 
                 # 최고 VIF가 임계값보다 낮으면 중단
                 max_vif = vif_df["VIF"].max()
@@ -294,7 +317,16 @@ class ImprovedPreprocessor:
         
         # 8. 피처 스케일링
         print("8. Feature scaling...")
-        self.scaler = RobustScaler()  # 이상값에 덜 민감
+        scaler_map = {
+            'standard': StandardScaler(),
+            'robust': RobustScaler(), 
+            'minmax': MinMaxScaler(),
+            'quantile': QuantileTransformer(n_quantiles=100, random_state=42)
+        }
+        
+        self.scaler = scaler_map.get(self.scaler_type, StandardScaler())
+        print(f"   Using {self.scaler.__class__.__name__}...")
+        
         X_train_scaled = self.scaler.fit_transform(X_train)
         X_test_scaled = self.scaler.transform(X_test)
         
