@@ -68,8 +68,13 @@ def engineer_features(train: pd.DataFrame, test: pd.DataFrame) -> tuple[pd.DataF
         df['weekday'] = df['datetime'].dt.weekday
         df['is_weekend'] = df['weekday'].isin([5, 6]).astype(int)
     
-    # Missing value imputation
+    # Missing value imputation (handle '-' strings)
     for col in ['total_area', 'cooling_area', 'pv_capacity', 'ess_capacity', 'pcs_capacity']:
+        # Replace '-' with NaN and convert to numeric
+        train[col] = pd.to_numeric(train[col].replace('-', np.nan), errors='coerce')
+        test[col] = pd.to_numeric(test[col].replace('-', np.nan), errors='coerce')
+        
+        # Fill with median
         median = train[col].median()
         train[col] = train[col].fillna(median)
         test[col] = test[col].fillna(median)
