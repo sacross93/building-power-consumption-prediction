@@ -36,7 +36,7 @@ class UltimateTuningSolution:
     
     def __init__(self, quick_mode=False, max_trials=None):
         self.quick_mode = quick_mode  # 빠른 테스트용
-        self.max_trials = max_trials or (20 if quick_mode else 100)  # trial 수 대폭 증가
+        self.max_trials = max_trials or (20 if quick_mode else 30)  # 적당한 trial 수
         self.best_params = {}
         self.best_models = {}
         self.validation_results = {}

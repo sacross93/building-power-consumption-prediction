@@ -65,8 +65,6 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
 import xgboost as xgb
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 
 def smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -173,15 +171,6 @@ def engineer_features(train: pd.DataFrame, test: pd.DataFrame) -> tuple[pd.DataF
         df['hour'] = df['datetime'].dt.hour
         df['weekday'] = df['datetime'].dt.weekday  # Monday=0
         df['is_weekend'] = df['weekday'].isin([5, 6]).astype(int)
-        
-        # Enhanced time features based on EDA insights
-        df['hour_peak_flag'] = df['hour'].isin([10, 11, 14, 15]).astype(int)
-        df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
-        df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
-        df['weekday_sin'] = np.sin(2 * np.pi * df['weekday'] / 7)
-        df['weekday_cos'] = np.cos(2 * np.pi * df['weekday'] / 7)
-        df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
-        df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
     # Impute missing numeric building info with training medians
     for col in ['total_area', 'cooling_area', 'pv_capacity', 'ess_capacity', 'pcs_capacity']:
         median = train[col].median()
@@ -231,150 +220,13 @@ def engineer_features(train: pd.DataFrame, test: pd.DataFrame) -> tuple[pd.DataF
     train = train.merge(bld_month_mean, on=['건물번호', 'month'], how='left')
     test = test.merge(bld_month_mean, on=['건물번호', 'month'], how='left')
     test['bld_month_mean'] = test['bld_month_mean'].fillna(test['건물번호'].map(building_mean))
-    
-    # Building-specific peak hour analysis  
-    # Building-specific peak hour analysis - fixed for pandas compatibility
-    building_peak_stats = []
-    for building_id in train['건물번호'].unique():
-        building_data = train[train['건물번호'] == building_id]
-        peak_hour = building_data.groupby('hour')['전력소비량(kWh)'].mean().idxmax()
-        building_peak_stats.append({'건물번호': building_id, 'peak_hour': peak_hour})
-    building_peak_hours = pd.DataFrame(building_peak_stats)
-    
-    train = train.merge(building_peak_hours, on='건물번호', how='left')
-    test = test.merge(building_peak_hours, on='건물번호', how='left')
-    test['peak_hour'] = test['peak_hour'].fillna(test['hour'])  # fallback
-    
+    # Additional engineered features
     for df in (train, test):
-        df['hour_deviation_from_peak'] = abs(df['hour'] - df['peak_hour'])
-        df['is_building_peak_hour'] = (df['hour'] == df['peak_hour']).astype(int)
-    
-    # Enhanced building and weather features
-    for df in (train, test):
-        # Temperature features (U-shaped relationship with power consumption)
-        df['temp_squared'] = df['temp'] ** 2
-        df['temp_cooling_need'] = np.maximum(0, df['temp'] - 23)  # cooling threshold
-        df['temp_heating_need'] = np.maximum(0, 20 - df['temp'])  # heating threshold
-        
-        # Building efficiency features
         df['area_ratio'] = df['cooling_area'] / df['total_area']
         df['pv_per_area'] = df['pv_capacity'] / df['total_area']
-        
-        # Enhanced weather interactions
         df['humidity_temp'] = df['humidity'] * df['temp']
         df['rain_wind'] = df['rainfall'] * df['wind_speed']
-        df['temp_humidity_cooling'] = df['temp'] * df['humidity'] * df['cooling_area'] / 10000
-        
-        # Building type specific features
-        df['is_idc'] = (df['building_type'] == 'IDC(전화국)').astype(int)
-        df['is_department_store'] = (df['building_type'] == '백화점').astype(int)
-        df['is_hospital'] = (df['building_type'] == '병원').astype(int)
-        
-        # Time-building type interactions
-        df['idc_night_factor'] = df['is_idc'] * (1 - df['hour_peak_flag'])
-        df['store_business_hours'] = df['is_department_store'] * df['hour_peak_flag']
-        
-        # High-importance feature interactions
-        df['bld_hour_month_interaction'] = df['bld_hour_mean'] * df['month'] / 12
-        df['cooling_temp_interaction'] = df['cooling_area'] * df['temp'] / 1000
-    
     return train, test
-
-
-def analyze_feature_importance(pipeline, feature_cols: list, categorical_cols: list, output_dir: Path) -> pd.DataFrame:
-    """Analyze and visualize feature importance from the trained XGBoost model.
-    
-    Parameters
-    ----------
-    pipeline : sklearn.pipeline.Pipeline
-        Trained pipeline containing preprocessor and XGBoost model
-    feature_cols : list
-        List of all feature column names
-    categorical_cols : list
-        List of categorical column names
-    output_dir : Path
-        Directory to save importance plots and analysis
-        
-    Returns
-    -------
-    pd.DataFrame
-        Feature importance analysis results
-    """
-    # Get the XGBoost model from pipeline
-    model = pipeline.named_steps['model']
-    
-    # Get feature importance
-    importance_gain = model.feature_importances_
-    
-    # Get feature names after one-hot encoding
-    preprocessor = pipeline.named_steps['preprocess']
-    
-    # Get encoded feature names
-    encoded_feature_names = []
-    
-    # Categorical features (one-hot encoded)
-    cat_transformer = preprocessor.named_transformers_['cat']
-    cat_feature_names = cat_transformer.get_feature_names_out(categorical_cols)
-    encoded_feature_names.extend(cat_feature_names)
-    
-    # Numerical features (passthrough)
-    numerical_cols = [col for col in feature_cols if col not in categorical_cols]
-    encoded_feature_names.extend(numerical_cols)
-    
-    # Create importance dataframe
-    importance_df = pd.DataFrame({
-        'feature': encoded_feature_names,
-        'importance': importance_gain
-    }).sort_values('importance', ascending=False)
-    
-    # Save importance analysis
-    importance_df.to_csv(output_dir / 'feature_importance.csv', index=False)
-    
-    # Create visualization
-    plt.figure(figsize=(12, 8))
-    top_features = importance_df.head(20)
-    plt.barh(range(len(top_features)), top_features['importance'])
-    plt.yticks(range(len(top_features)), top_features['feature'])
-    plt.xlabel('Feature Importance')
-    plt.title('Top 20 Feature Importance (XGBoost)')
-    plt.gca().invert_yaxis()
-    plt.tight_layout()
-    plt.savefig(output_dir / 'feature_importance_plot.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    # Analyze categorical vs numerical importance
-    cat_importance = importance_df[importance_df['feature'].str.contains('|'.join(categorical_cols))]
-    num_importance = importance_df[~importance_df['feature'].str.contains('|'.join(categorical_cols))]
-    
-    analysis = {
-        'total_features': len(importance_df),
-        'top_10_features': importance_df.head(10)['feature'].tolist(),
-        'categorical_avg_importance': cat_importance['importance'].mean(),
-        'numerical_avg_importance': num_importance['importance'].mean(),
-        'top_categorical': cat_importance.head(5)['feature'].tolist(),
-        'top_numerical': num_importance.head(5)['feature'].tolist()
-    }
-    
-    # Save analysis summary
-    with open(output_dir / 'feature_analysis_summary.txt', 'w') as f:
-        f.write("=== Feature Importance Analysis ===\n\n")
-        f.write(f"Total features: {analysis['total_features']}\n")
-        f.write(f"Average categorical importance: {analysis['categorical_avg_importance']:.6f}\n")
-        f.write(f"Average numerical importance: {analysis['numerical_avg_importance']:.6f}\n\n")
-        f.write("Top 10 Most Important Features:\n")
-        for i, feat in enumerate(analysis['top_10_features'], 1):
-            importance_val = importance_df[importance_df['feature'] == feat]['importance'].iloc[0]
-            f.write(f"{i:2d}. {feat}: {importance_val:.6f}\n")
-        f.write(f"\nTop 5 Categorical Features:\n")
-        for feat in analysis['top_categorical']:
-            importance_val = importance_df[importance_df['feature'] == feat]['importance'].iloc[0]
-            f.write(f"  - {feat}: {importance_val:.6f}\n")
-        f.write(f"\nTop 5 Numerical Features:\n")
-        for feat in analysis['top_numerical']:
-            importance_val = importance_df[importance_df['feature'] == feat]['importance'].iloc[0]
-            f.write(f"  - {feat}: {importance_val:.6f}\n")
-    
-    return importance_df
 
 
 def build_and_train_model(train: pd.DataFrame, test: pd.DataFrame, output_dir: Path) -> None:
@@ -411,18 +263,18 @@ def build_and_train_model(train: pd.DataFrame, test: pd.DataFrame, output_dir: P
     val_mask = ~train_mask
     X_train, y_train = X.loc[train_mask], y.loc[train_mask]
     X_val, y_val = X.loc[val_mask], y.loc[val_mask]
-    # Balanced XGBoost regressor for good performance and speed
+    # Instantiate the XGBoost regressor
     model = xgb.XGBRegressor(
-        max_depth=8,
-        n_estimators=400,
-        learning_rate=0.08,
-        subsample=0.85,
-        colsample_bytree=0.85,
-        reg_alpha=1.0,
-        reg_lambda=2.0,
+        max_depth=12,
+        n_estimators=1000,
+        learning_rate=0.03,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.0,
+        reg_lambda=1.0,
         objective='reg:squarederror',
         tree_method='hist',
-        random_state=42
+        random_state=42,
     )
     pipeline = Pipeline(steps=[('preprocess', preprocessor), ('model', model)])
     # Train on the chronological training subset
@@ -430,26 +282,12 @@ def build_and_train_model(train: pd.DataFrame, test: pd.DataFrame, output_dir: P
     # Evaluate on the validation subset
     val_pred = pipeline.predict(X_val)
     val_smape = smape(y_val.values, val_pred)
-    
-    # Analyze feature importance on validation model
-    print("Analyzing feature importance...")
-    importance_df = analyze_feature_importance(pipeline, feature_cols, categorical_cols, output_dir)
-    
     # Save validation SMAPE to a text file
     validation_path = output_dir / 'model_validation.txt'
     with validation_path.open('w') as f:
         f.write(f'Validation SMAPE: {val_smape:.6f}%\n')
-        f.write(f'Top 5 features: {importance_df.head(5)["feature"].tolist()}\n')
-    
-    print(f"Validation SMAPE: {val_smape:.6f}%")
-    print(f"Top 5 important features: {importance_df.head(5)['feature'].tolist()}")
-    
     # Retrain on the full training data
     pipeline.fit(X, y)
-    
-    # Analyze feature importance on final model
-    final_importance_df = analyze_feature_importance(pipeline, feature_cols, categorical_cols, output_dir)
-    final_importance_df.to_csv(output_dir / 'final_feature_importance.csv', index=False)
     # Generate predictions for the test set
     test_pred = pipeline.predict(X_test)
     # Create submission file
@@ -460,10 +298,9 @@ def build_and_train_model(train: pd.DataFrame, test: pd.DataFrame, output_dir: P
 
 def main() -> None:
     base_dir = Path('.')
-    data_dir = Path('../data')
-    train_path = data_dir / 'train.csv'
-    test_path = data_dir / 'test.csv'
-    building_path = data_dir / 'building_info.csv'
+    train_path = base_dir / 'train.csv'
+    test_path = base_dir / 'test.csv'
+    building_path = base_dir / 'building_info.csv'
     # Load raw data and merge building info
     train_df, test_df = load_data(train_path, test_path, building_path)
     # Engineer features
