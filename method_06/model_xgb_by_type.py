@@ -35,7 +35,7 @@ def build_features(df: pd.DataFrame, drop_rainfall: bool) -> pd.DataFrame:
     return df[[c for c in df.columns if c not in drop_cols]]
 
 
-def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path: Path, drop_rainfall: bool) -> None:
+def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path: Path, drop_rainfall: bool, gpus: list[int] | None) -> None:
     print("📦 데이터 준비...")
     train_df = ensure_num_date_time(train_df)
     test_df = ensure_num_date_time(test_df)
@@ -58,6 +58,8 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
     # 공통 피처셋(유형별로 건물번호 OHE 적용)
     base_cols = build_features(train_df, drop_rainfall).columns.tolist()
     print(f"기본 피처 수: {len(base_cols)}")
+    if gpus and len(gpus) > 0:
+        print(f"🚀 GPU 사용: {gpus} (xgboost gpu_hist)")
 
     for t in type_values:
         print(f"\n🏷️ 유형 학습: {t}")
@@ -99,12 +101,23 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
             random_state=2025,
             eval_metric="mae",
         )
+        # GPU 설정
+        if gpus and len(gpus) > 0:
+            params.update({"tree_method": "gpu_hist", "predictor": "gpu_predictor"})
 
         for fold, (tr_idx, va_idx) in enumerate(kf.split(X), 1):
             X_tr, X_va = X[tr_idx], X[va_idx]
             y_tr, y_va = y[tr_idx], y[va_idx]
 
-            model = xgb.XGBRegressor(**params)
+            # fold별 GPU 라운드로빈 배정
+            fold_gpu = None
+            if gpus and len(gpus) > 0:
+                fold_gpu = gpus[(fold - 1) % len(gpus)]
+                params_fold = {**params, "gpu_id": int(fold_gpu)}
+            else:
+                params_fold = params
+            print(f"  ▶ Fold {fold}: GPU={fold_gpu if fold_gpu is not None else 'CPU'}")
+            model = xgb.XGBRegressor(**params_fold)
             # 다양한 xgboost 버전 호환: callbacks 우선, 실패 시 ES 없이 학습
             try:
                 cb = [xgb.callback.EarlyStopping(rounds=200, save_best=True)]
@@ -177,12 +190,12 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
         json.dump({"total_oof": float(total_smape), **logs}, f, ensure_ascii=False, indent=2)
 
 
-def main(train_path: Path, test_path: Path, submission_path: Path, drop_rainfall: bool) -> None:
+def main(train_path: Path, test_path: Path, submission_path: Path, drop_rainfall: bool, gpus: list[int] | None) -> None:
     print("📥 캐시 로드...")
     train_df = pd.read_parquet(train_path)
     test_df = pd.read_parquet(test_path)
 
-    train_xgb_by_type(train_df, test_df, submission_path, drop_rainfall)
+    train_xgb_by_type(train_df, test_df, submission_path, drop_rainfall, gpus)
 
 
 if __name__ == "__main__":
@@ -191,10 +204,12 @@ if __name__ == "__main__":
     parser.add_argument("--test", type=Path, default=Path("/home/wlsdud022/ds_test/method_06/cache/test_preprocessed.parquet"))
     parser.add_argument("--sub", type=Path, default=Path("/home/wlsdud022/ds_test/method_06/submission_xgb_by_type.csv"))
     parser.add_argument("--drop-rainfall", action="store_true")
+    parser.add_argument("--gpus", type=str, default="", help="comma-separated GPU ids to use (e.g., '2,3')")
     args = parser.parse_args()
 
     # test_path needed inside train_xgb_by_type for sample path
     global test_path
     test_path = args.test
-    main(args.train, args.test, args.sub, args.drop_rainfall)
+    gpus = [int(x) for x in args.gpus.split(',')] if args.gpus.strip() else []
+    main(args.train, args.test, args.sub, args.drop_rainfall, gpus)
 
