@@ -97,6 +97,7 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
             reg_alpha=0.0,
             tree_method="hist",
             random_state=2025,
+            eval_metric="mae",
         )
 
         for fold, (tr_idx, va_idx) in enumerate(kf.split(X), 1):
@@ -108,7 +109,6 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
                 X_tr,
                 y_tr,
                 eval_set=[(X_va, y_va)],
-                eval_metric="mae",
                 verbose=False,
                 early_stopping_rounds=200,
             )
