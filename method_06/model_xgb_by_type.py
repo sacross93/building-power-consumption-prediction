@@ -105,13 +105,23 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
             y_tr, y_va = y[tr_idx], y[va_idx]
 
             model = xgb.XGBRegressor(**params)
-            model.fit(
-                X_tr,
-                y_tr,
-                eval_set=[(X_va, y_va)],
-                verbose=False,
-                early_stopping_rounds=200,
-            )
+            # 다양한 xgboost 버전 호환: callbacks 우선, 실패 시 ES 없이 학습
+            try:
+                cb = [xgb.callback.EarlyStopping(rounds=200, save_best=True)]
+                model.fit(
+                    X_tr,
+                    y_tr,
+                    eval_set=[(X_va, y_va)],
+                    callbacks=cb,
+                )
+            except TypeError:
+                # 콜백 미지원 버전: ES 없이 축소 n_estimators로 학습
+                model.set_params(n_estimators=min(2000, model.get_params().get('n_estimators', 5000)))
+                model.fit(
+                    X_tr,
+                    y_tr,
+                    eval_set=[(X_va, y_va)],
+                )
 
             pred_va = model.predict(X_va)
             pred_te = model.predict(X_test)
