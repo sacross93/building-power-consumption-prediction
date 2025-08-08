@@ -12,6 +12,8 @@ import pandas as pd
 
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.linear_model import LinearRegression, ElasticNetCV
+from sklearn.linear_model import LinearRegression
+from scipy.optimize import nnls
 from datetime import timedelta
 
 import lightgbm as lgb
@@ -284,15 +286,23 @@ def main(train_path: Path, test_path: Path, submission_path: Path):
         test_preds += fold_test_pred / n_splits
         gc.collect()
 
-    print("\n🔗 메타 모델 학습 (ElasticNetCV, 원공간)...")
+    print("\n🔗 메타 모델 학습 (ElasticNetCV, 원공간) & NNLS 블렌딩...")
     # 베이스 예측/타깃은 이미 원공간
     oof_preds_linear = oof_preds
     y_linear = y.to_numpy()
+    # ElasticNetCV
     meta = ElasticNetCV(l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9], alphas=None, cv=5, random_state=SEED, n_jobs=None)
     meta.fit(oof_preds_linear, y_linear)
-    oof_meta_linear = meta.predict(oof_preds_linear)
-    score_meta_linear = smape_np(y_linear, oof_meta_linear)
-    print(f"✅ Meta SMAPE (linear-space): {score_meta_linear:.3f}%")
+    oof_enet = meta.predict(oof_preds_linear)
+    score_enet = smape_np(y_linear, oof_enet)
+    print(f"✅ ElasticNetCV OOF SMAPE: {score_enet:.3f}%")
+    # NNLS 비음수 가중 블렌딩(합=1로 정규화)
+    w, _ = nnls(oof_preds_linear, y_linear)
+    if w.sum() > 0:
+        w = w / w.sum()
+    oof_nnls = oof_preds_linear @ w
+    score_nnls = smape_np(y_linear, oof_nnls)
+    print(f"✅ NNLS OOF SMAPE: {score_nnls:.3f}% | weights={w}")
 
     # 마지막 1주 홀드아웃(OOF 기반) SMAPE 추가
     try:
@@ -309,7 +319,11 @@ def main(train_path: Path, test_path: Path, submission_path: Path):
         print("⚠️ Holdout SMAPE 계산 실패:", str(e))
 
     # test 메타 예측(원공간)
-    final_pred_kwh = meta.predict(test_preds)
+    # 테스트 예측: 두 방법 모두 산출, 더 좋은 쪽 사용
+    pred_enet = meta.predict(test_preds)
+    pred_nnls = test_preds @ w
+    # 보수적으로 NNLS가 존재하고 성능이 좋으면 NNLS 사용
+    final_pred_kwh = pred_nnls if score_nnls <= score_enet else pred_enet
 
     submission = pd.DataFrame({
         "num_date_time": test_df["num_date_time"],

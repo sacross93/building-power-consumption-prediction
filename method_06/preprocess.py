@@ -56,6 +56,15 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     # 순서/추세
     df["day_of_year"] = dt.dt.dayofyear
     df["week_of_year"] = dt.dt.isocalendar().week.astype(int)
+    # 대형마트(할인마트) 일요일 휴무 플래그(2,4번째 일요일 휴무 가정)
+    try:
+        # nth Sunday in month: ((day-1)//7)+1 when weekday==6
+        nth_in_month = ((df["day"] - 1) // 7) + 1
+        is_sunday = (df["weekday"] == 6)
+        is_mart = (df.get("건물유형").astype(str) == "할인마트") if "건물유형" in df.columns else False
+        df["mart_sunday_holiday"] = (is_mart & is_sunday & nth_in_month.isin([2, 4])).astype(int)
+    except Exception:
+        df["mart_sunday_holiday"] = 0
     return df
 
 
@@ -125,6 +134,10 @@ def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: P
 
     # 설비 용량 처리: '-' / NaN -> 0
     info_df = convert_capacity_to_zero(info_df)
+    # 설비 보유 플래그(0/1)
+    for c, flag in [("태양광용량(kW)", "solar_power_utility"), ("ESS저장용량(kWh)", "ess_utility"), ("PCS용량(kW)", "pcs_utility")]:
+        if c in info_df.columns:
+            info_df[flag] = (info_df[c] > 0).astype(int)
 
     # test에 타깃 없음 지정
     test_df["전력소비량(kWh)"] = np.nan
@@ -259,6 +272,16 @@ def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: P
     # 안전: 학습 타깃 결손 제거
     if "log_power" in df_train.columns:
         df_train = df_train[df_train["log_power"].notna()].copy()
+    # 일별 온도 집계(최/평/최저 및 일교차) 생성
+    try:
+        for df in (df_train, df_test):
+            grp = df.groupby(["건물번호", "month", "day"])  # 동일 월/일 기준
+            df["day_max_temperature"] = grp["기온(°C)"].transform("max")
+            df["day_mean_temperature"] = grp["기온(°C)"].transform("mean")
+            df["day_min_temperature"] = grp["기온(°C)"].transform("min")
+            df["day_temperature_range"] = df["day_max_temperature"] - df["day_min_temperature"]
+    except Exception:
+        pass
     train_out = output_dir / "train_preprocessed.parquet"
     test_out = output_dir / "test_preprocessed.parquet"
     df_train.to_parquet(train_out, index=False)
