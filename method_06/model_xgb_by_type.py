@@ -74,8 +74,9 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
         te_t = pd.get_dummies(te_t, columns=[ohe_col])
         tr_t, te_t = tr_t.align(te_t, join="left", axis=1, fill_value=0)
 
-        # 피처 선택(공통 + OHE 확장 반영)
-        fcols = [c for c in tr_t.columns if c not in {"일시", "num_date_time", "log_power", target}]
+        # 피처 선택(공통 + OHE 확장 반영) – 비수치 컬럼 제거 및 타깃/시간/키 제외
+        num_cols = tr_t.select_dtypes(include=[np.number]).columns.tolist()
+        fcols = [c for c in num_cols if c != target]
         X = tr_t[fcols].to_numpy()
         y = tr_t[target].to_numpy()
         X_test = te_t[fcols].to_numpy()
