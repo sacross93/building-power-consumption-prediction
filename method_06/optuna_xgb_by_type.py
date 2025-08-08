@@ -49,6 +49,7 @@ def train_eval_oof(
     y_all = []
 
     for t in types:
+        print(f"[OOF] 유형 '{t}' 학습 시작", flush=True)
         tr_t = train_df[train_df["건물유형"].astype(str) == t].copy()
         # OHE building id
         tr_t["건물번호"] = tr_t["건물번호"].astype(str)
@@ -81,6 +82,9 @@ def train_eval_oof(
                 pred_va = model.predict(X_va)
                 oof_t[va_idx] += pred_va / len(seeds)
                 gc.collect()
+            # 시드 단위 진행 로그
+            part_score = smape_np(y, oof_t)
+            print(f"[OOF] 유형 '{t}' seed={seed} 진행 SMAPE~ {part_score:.3f}%", flush=True)
 
         oof_all.append(oof_t)
         y_all.append(y)
@@ -144,9 +148,26 @@ def main():
         verbosity=0,
     )
 
+    # 실시간 로그 파일 경로
+    log_path = outdir / "optuna_live.log"
+
+    def _writelog(msg: str):
+        try:
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(msg + "\n")
+        except Exception:
+            pass
+
+    # 설정 요약 로그
+    print("[SETUP] train=", args.train, "test=", args.test, flush=True)
+    print(f"[SETUP] gpus={gpus}, opt_seeds={opt_seeds}, final_seeds={final_seeds}, objective={args.objective}", flush=True)
+    _writelog(f"[SETUP] outdir={outdir}")
+
     # Optimization objective
     def objective(trial: optuna.Trial) -> float:
         params = make_params_from_trial(trial, base_params)
+        print(f"[TRIAL {trial.number}] params={params}", flush=True)
+        _writelog(f"[TRIAL {trial.number}] params={params}")
         score = train_eval_oof(
             ensure_num_date_time(build_features(train_df, args.drop_rainfall)),
             params,
@@ -154,6 +175,8 @@ def main():
             opt_seeds,
             gpus,
         )
+        print(f"[TRIAL {trial.number}] OOF SMAPE={score:.3f}%", flush=True)
+        _writelog(f"[TRIAL {trial.number}] OOF SMAPE={score:.6f}")
         return score  # minimize SMAPE
 
     study = optuna.create_study(direction="minimize", study_name=args.study_name, sampler=optuna.samplers.TPESampler(seed=args.sampler_seed))
@@ -166,6 +189,8 @@ def main():
         json.dump({"best_params": best_params, "best_smape": best_value}, f, ensure_ascii=False, indent=2)
     df_trials = study.trials_dataframe()
     df_trials.to_csv(outdir / "optuna_trials.csv", index=False)
+    print(f"[BEST] SMAPE={best_value:.3f}% params={best_params}", flush=True)
+    _writelog(f"[BEST] SMAPE={best_value:.6f} params={best_params}")
 
     # Final training with best params + full seeds, and guardrail blending
     final_params = make_params_from_trial(optuna.trial.FixedTrial(best_params), base_params)
@@ -177,6 +202,7 @@ def main():
     types = train_df2["건물유형"].astype(str).unique().tolist()
     preds_test_list = []
     for t in types:
+        print(f"[FINAL] 유형 '{t}' 최종 학습 시작", flush=True)
         tr_t = train_df2[train_df2["건물유형"].astype(str) == t].copy()
         te_t = test_df2[test_df2["건물유형"].astype(str) == t].copy()
         tr_t["건물번호"], te_t["건물번호"] = tr_t["건물번호"].astype(str), te_t["건물번호"].astype(str)
@@ -205,6 +231,7 @@ def main():
                     model.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], verbose=False)
                 preds_te += model.predict(X_test) / kf.get_n_splits()
                 gc.collect()
+            print(f"[FINAL] 유형 '{t}' seed={seed} 완료", flush=True)
             preds_acc[si] = preds_te
         te_mean = preds_acc.mean(axis=0)
         preds_test_list.append(pd.DataFrame({"type": t, "num_date_time": te_t["num_date_time"], "pred": te_mean}))
@@ -228,7 +255,7 @@ def main():
         pass
     out_path = args.outdir / "submission_optuna_best.csv"
     sub.to_csv(out_path, index=False)
-    print(f"✅ Optuna best SMAPE (OOF): {best_value:.3f}% | Submission: {out_path}")
+    print(f"✅ Optuna best SMAPE (OOF): {best_value:.3f}% | Submission: {out_path}", flush=True)
 
 
 if __name__ == "__main__":
