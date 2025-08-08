@@ -35,7 +35,7 @@ def build_features(df: pd.DataFrame, drop_rainfall: bool) -> pd.DataFrame:
     return df[[c for c in df.columns if c not in drop_cols]]
 
 
-def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path: Path, drop_rainfall: bool, gpus: list[int] | None) -> None:
+def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path: Path, drop_rainfall: bool, gpus: list[int] | None, seeds: list[int] | None, guardrail_alpha: float = 0.0) -> None:
     print("📦 데이터 준비...")
     train_df = ensure_num_date_time(train_df)
     test_df = ensure_num_date_time(test_df)
@@ -83,9 +83,9 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
 
         print(f"유형 {t}: 학습행 {X.shape[0]}, 피처 {X.shape[1]}, 테스트행 {X_test.shape[0]}")
 
-        kf = KFold(n_splits=7, shuffle=True, random_state=2025)
+        seed_list = seeds if seeds else [2025]
         oof = np.zeros(X.shape[0])
-        preds_te = np.zeros(X_test.shape[0])
+        preds_te_acc = np.zeros((len(seed_list), X_test.shape[0]))
         fold_scores = []
 
         # XGB 설정(보수적)
@@ -107,57 +107,62 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
         if gpus and len(gpus) > 0:
             params.update({"tree_method": "gpu_hist", "predictor": "gpu_predictor"})
 
-        for fold, (tr_idx, va_idx) in enumerate(kf.split(X), 1):
-            X_tr, X_va = X[tr_idx], X[va_idx]
-            y_tr, y_va = y[tr_idx], y[va_idx]
+        for si, seed in enumerate(seed_list):
+            print(f"  🌱 Seed {seed}")
+            kf = KFold(n_splits=7, shuffle=True, random_state=seed)
+            preds_te = np.zeros(X_test.shape[0])
+            for fold, (tr_idx, va_idx) in enumerate(kf.split(X), 1):
+                X_tr, X_va = X[tr_idx], X[va_idx]
+                y_tr, y_va = y[tr_idx], y[va_idx]
 
-            # fold별 GPU 라운드로빈 배정
-            fold_gpu = None
-            if gpus and len(gpus) > 0:
-                fold_gpu = gpus[(fold - 1) % len(gpus)]
-                params_fold = {**params, "gpu_id": int(fold_gpu)}
-            else:
-                params_fold = params
-            print(f"  ▶ Fold {fold}: GPU={fold_gpu if fold_gpu is not None else 'CPU'}")
-            model = xgb.XGBRegressor(**params_fold)
-            # 다양한 xgboost 버전 호환: callbacks 우선, 실패 시 ES 없이 학습
-            try:
-                cb = [xgb.callback.EarlyStopping(rounds=200, save_best=True)]
-                model.fit(
-                    X_tr,
-                    y_tr,
-                    eval_set=[(X_va, y_va)],
-                    callbacks=cb,
-                    verbose=False,
-                )
-            except TypeError:
-                # 콜백 미지원 버전: ES 없이 축소 n_estimators로 학습
-                model.set_params(n_estimators=min(2000, model.get_params().get('n_estimators', 5000)))
-                model.fit(
-                    X_tr,
-                    y_tr,
-                    eval_set=[(X_va, y_va)],
-                    verbose=False,
-                )
+                # fold별 GPU 라운드로빈 배정
+                fold_gpu = None
+                if gpus and len(gpus) > 0:
+                    fold_gpu = gpus[(fold - 1) % len(gpus)]
+                    params_fold = {**params, "gpu_id": int(fold_gpu), "random_state": seed}
+                else:
+                    params_fold = {**params, "random_state": seed}
+                print(f"  ▶ Fold {fold}: GPU={fold_gpu if fold_gpu is not None else 'CPU'}")
+                model = xgb.XGBRegressor(**params_fold)
+                # 다양한 xgboost 버전 호환: callbacks 우선, 실패 시 ES 없이 학습
+                try:
+                    cb = [xgb.callback.EarlyStopping(rounds=200, save_best=True)]
+                    model.fit(
+                        X_tr,
+                        y_tr,
+                        eval_set=[(X_va, y_va)],
+                        callbacks=cb,
+                        verbose=False,
+                    )
+                except TypeError:
+                    # 콜백 미지원 버전: ES 없이 축소 n_estimators로 학습
+                    model.set_params(n_estimators=min(2000, model.get_params().get('n_estimators', 5000)))
+                    model.fit(
+                        X_tr,
+                        y_tr,
+                        eval_set=[(X_va, y_va)],
+                        verbose=False,
+                    )
 
-            pred_va = model.predict(X_va)
-            pred_te = model.predict(X_test)
-            oof[va_idx] = pred_va
-            preds_te += pred_te / kf.get_n_splits()
+                pred_va = model.predict(X_va)
+                pred_te = model.predict(X_test)
+                oof[va_idx] += pred_va / len(seed_list)
+                preds_te += pred_te / kf.get_n_splits()
 
-            score = smape_np(y_va, pred_va)
-            fold_scores.append(score)
+                score = smape_np(y_va, pred_va)
+                fold_scores.append(score)
 
-            # 피처 중요도 TOP20 로그
-            try:
-                importances = model.feature_importances_
-                top_idx = np.argsort(importances)[-20:][::-1]
-                top_feats = [(fcols[i], float(importances[i])) for i in top_idx]
-                print(f"Fold {fold} SMAPE={score:.3f}, Top20: {top_feats}")
-            except Exception:
-                print(f"Fold {fold} SMAPE={score:.3f}")
+                # 피처 중요도 TOP20 로그
+                try:
+                    importances = model.feature_importances_
+                    top_idx = np.argsort(importances)[-20:][::-1]
+                    top_feats = [(fcols[i], float(importances[i])) for i in top_idx]
+                    print(f"Fold {fold} SMAPE={score:.3f}, Top20: {top_feats}")
+                except Exception:
+                    print(f"Fold {fold} SMAPE={score:.3f}")
 
-            gc.collect()
+                gc.collect()
+            preds_te_acc[si] = preds_te
 
         type_oof = smape_np(y, oof)
         print(f"유형 {t} OOF SMAPE={type_oof:.3f} | folds={np.round(fold_scores,3)}")
@@ -165,7 +170,8 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
 
         # 결과 수집
         oof_list.append(pd.DataFrame({"type": t, "y": y, "oof": oof}))
-        preds_test_list.append(pd.DataFrame({"type": t, "num_date_time": te_t["num_date_time"], "pred": preds_te}))
+        # seed 앙상블 평균
+        preds_test_list.append(pd.DataFrame({"type": t, "num_date_time": te_t["num_date_time"], "pred": preds_te_acc.mean(axis=0)}))
 
     # 전체 OOF
     all_oof = pd.concat(oof_list, ignore_index=True)
@@ -186,6 +192,11 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
         sub = sample[["num_date_time"]].merge(sub, on="num_date_time", how="left")
     except Exception:
         pass
+    # 가드레일 블렌딩(선택): building_hour_weekday_mean과 완만히 혼합
+    if guardrail_alpha > 0 and {"num_date_time", "building_hour_weekday_mean"}.issubset(test_df.columns):
+        sub = sub.merge(test_df[["num_date_time", "building_hour_weekday_mean"]], on="num_date_time", how="left")
+        sub["answer"] = (1 - guardrail_alpha) * sub["answer"] + guardrail_alpha * sub["building_hour_weekday_mean"]
+        sub.drop(columns=["building_hour_weekday_mean"], inplace=True)
     sub["answer"] = np.clip(sub["answer"], 0, None)
     sub.to_csv(output_path, index=False)
     print(f"🎉 Saved submission to {output_path}")
@@ -196,12 +207,12 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
         json.dump({"total_oof": float(total_smape), **logs}, f, ensure_ascii=False, indent=2)
 
 
-def main(train_path: Path, test_path: Path, submission_path: Path, drop_rainfall: bool, gpus: list[int] | None) -> None:
+def main(train_path: Path, test_path: Path, submission_path: Path, drop_rainfall: bool, gpus: list[int] | None, seeds: list[int] | None, guardrail_alpha: float) -> None:
     print("📥 캐시 로드...")
     train_df = pd.read_parquet(train_path)
     test_df = pd.read_parquet(test_path)
 
-    train_xgb_by_type(train_df, test_df, submission_path, drop_rainfall, gpus)
+    train_xgb_by_type(train_df, test_df, submission_path, drop_rainfall, gpus, seeds, guardrail_alpha)
 
 
 if __name__ == "__main__":
@@ -211,11 +222,14 @@ if __name__ == "__main__":
     parser.add_argument("--sub", type=Path, default=Path("/home/wlsdud022/ds_test/method_06/submission_xgb_by_type.csv"))
     parser.add_argument("--drop-rainfall", action="store_true")
     parser.add_argument("--gpus", type=str, default="", help="comma-separated GPU ids to use (e.g., '2,3')")
+    parser.add_argument("--seeds", type=str, default="", help="comma-separated seeds (e.g., '2023,2025,2027')")
+    parser.add_argument("--guardrail", type=float, default=0.0, help="blend alpha with building_hour_weekday_mean (0~1)")
     args = parser.parse_args()
 
     # test_path needed inside train_xgb_by_type for sample path
     global test_path
     test_path = args.test
     gpus = [int(x) for x in args.gpus.split(',')] if args.gpus.strip() else []
-    main(args.train, args.test, args.sub, args.drop_rainfall, gpus)
+    seeds = [int(x) for x in args.seeds.split(',')] if args.seeds.strip() else []
+    main(args.train, args.test, args.sub, args.drop_rainfall, gpus, seeds, args.guardrail)
 

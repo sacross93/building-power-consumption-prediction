@@ -80,6 +80,87 @@ def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_cdh_features(df: pd.DataFrame) -> pd.DataFrame:
+    # CDH: Cooling Degree Hours relative to 26°C
+    if "기온(°C)" not in df.columns:
+        return df
+    df = df.sort_values(["건물번호", "일시"]).copy()
+    heat = (df["기온(°C)"] - 26).clip(lower=0)
+    # 그룹별 rolling sum (윈도우 3/12/24)
+    for win in [3, 12, 24]:
+        df[f"CDH_{win}"] = (
+            heat.groupby(df["건물번호"]).rolling(window=win, min_periods=1).sum().reset_index(level=0, drop=True)
+        )
+    return df
+
+
+def add_holiday_adj_features(df: pd.DataFrame) -> pd.DataFrame:
+    if "is_holiday" not in df.columns:
+        return df
+    dt = df["일시"].dt.date
+    # 이전/다음날 공휴일 여부
+    prev_day = (df["일시"] - pd.Timedelta(days=1)).dt.date
+    next_day = (df["일시"] + pd.Timedelta(days=1)).dt.date
+    # KR holidays
+    try:
+        import holidays
+        KR = holidays.KR()
+        is_prev_holiday = prev_day.map(lambda d: int(d in KR))
+        is_next_holiday = next_day.map(lambda d: int(d in KR))
+    except Exception:
+        is_prev_holiday = 0
+        is_next_holiday = 0
+    df["pre_holiday"] = is_prev_holiday
+    df["post_holiday"] = is_next_holiday
+    # 3일 연휴(금/월 포함) 근사: 금요일/월요일이 공휴일 이웃
+    weekday = df["weekday"]
+    df["long_weekend"] = (((weekday == 4) & (df["post_holiday"] == 1)) | ((weekday == 0) & (df["pre_holiday"] == 1))).astype(int)
+    # 방학(7-8월)
+    df["is_vacation"] = df["month"].isin([7, 8]).astype(int)
+    return df
+
+
+def add_interactions(df: pd.DataFrame) -> pd.DataFrame:
+    # 시간×온도(THI) 교호항
+    if "THI" in df.columns:
+        df["hour_THI_sin"] = df["hour_sin"] * df["THI"]
+        df["hour_THI_cos"] = df["hour_cos"] * df["THI"]
+    return df
+
+
+def add_normalized_equipment(df: pd.DataFrame) -> pd.DataFrame:
+    if "연면적(m2)" not in df.columns:
+        return df
+    denom = df["연면적(m2)"] + 1e-6
+    for col, newc in [
+        ("태양광용량(kW)", "pv_per_area"),
+        ("ESS저장용량(kWh)", "ess_per_area"),
+        ("PCS용량(kW)", "pcs_per_area"),
+    ]:
+        if col in df.columns:
+            df[newc] = df[col] / denom
+    return df
+
+
+def add_recent_weather(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.sort_values(["건물번호", "일시"]).copy()
+    for col in ["기온(°C)", "습도(%)"]:
+        if col not in df.columns:
+            continue
+        for win in [6, 24]:
+            df[f"{col}_roll_min_{win}"] = (
+                df.groupby("건물번호")[col].rolling(win, min_periods=1).min().reset_index(level=0, drop=True)
+            )
+            df[f"{col}_roll_max_{win}"] = (
+                df.groupby("건물번호")[col].rolling(win, min_periods=1).max().reset_index(level=0, drop=True)
+            )
+        # slope: 현재 - lag_k / k
+        for k in [6, 24]:
+            lagk = df.groupby("건물번호")[col].shift(k)
+            df[f"{col}_slope_{k}"] = (df[col] - lagk) / float(k)
+    return df
+
+
 def create_lag_rolling_no_leak(df: pd.DataFrame, group_cols: List[str], target_cols: List[str]) -> pd.DataFrame:
     # 정렬 보장
     df = df.sort_values(group_cols + ["일시"]).copy()
@@ -161,6 +242,35 @@ def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: P
     # 시간 파생 + 날씨 파생
     all_df = add_time_features(all_df)
     all_df = add_weather_features(all_df)
+    if getattr(preprocess, "_use_cdh", False):
+        all_df = add_cdh_features(all_df)
+    if getattr(preprocess, "_use_holiday_adj", False):
+        all_df = add_holiday_adj_features(all_df)
+    if getattr(preprocess, "_use_interactions", False):
+        all_df = add_interactions(all_df)
+    if getattr(preprocess, "_use_normalized_equipment", False):
+        all_df = add_normalized_equipment(all_df)
+    if getattr(preprocess, "_use_recent_weather", False):
+        all_df = add_recent_weather(all_df)
+
+    # 로그 변환 (사용자 지정 리스트)
+    log_list: list[str] = getattr(preprocess, "_log_transform_list", [])
+    for col in log_list:
+        if col in all_df.columns:
+            newc = f"log_{col}"
+            if newc not in all_df.columns:
+                # 음수 방지: 음수 존재 시 0으로 시프트하지 않고 생성 생략
+                if (all_df[col].dropna() < 0).any():
+                    continue
+                all_df[newc] = np.log1p(all_df[col])
+
+    # 윈저라이즈(상한 캡핑) – 사용자 지정 리스트에 대해 건물 단위 적용
+    win_q: float = getattr(preprocess, "_winsorize_q", 0.0)
+    win_cols: list[str] = getattr(preprocess, "_winsorize_cols", [])
+    if win_q and win_cols:
+        for col in win_cols:
+            if col in all_df.columns:
+                all_df[col] = winsorize_per_building(all_df, col, upper_q=win_q)
 
     # 일조/일사 대체 피처: 테스트에는 없으므로 8월 시간대 평균으로 근사치 생성 후 원 컬럼 제거
     try:
@@ -267,6 +377,18 @@ def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: P
     # 범주형 유지
     all_df["건물번호"] = all_df["건물번호"].astype("category")
 
+    # 원시 면적 컬럼 제거 옵션 (로그/ratio/정규화 사용)
+    if getattr(preprocess, "_drop_raw_area", False):
+        for c in ["연면적(m2)", "냉방면적(m2)"]:
+            if c in all_df.columns:
+                all_df.drop(columns=[c], inplace=True)
+
+    # 캘린더 최소화 옵션: day/day_of_year/week_of_year 제거(푸리에/weekday 유지)
+    if getattr(preprocess, "_calendar_minimal", False):
+        for c in ["day", "day_of_year", "week_of_year"]:
+            if c in all_df.columns:
+                all_df.drop(columns=[c], inplace=True)
+
     # 캐시 저장
     ensure_dir(output_dir)
     # 병합/재할당 이후 인덱스가 바뀌어 기존 mask와 정렬이 어긋날 수 있어 재계산
@@ -301,10 +423,30 @@ def main():
     parser.add_argument("--out", type=Path, default=Path("/home/wlsdud022/ds_test/method_06/cache"))
     parser.add_argument("--keep-target-lags", action="store_true", help="전력소비량 타깃 기반 lag/rolling 피처를 유지합니다")
     parser.add_argument("--drop-rainfall", action="store_true", help="강수량(mm) 피처를 제거합니다")
+    parser.add_argument("--use-cdh", action="store_true")
+    parser.add_argument("--use-holiday-adj", action="store_true")
+    parser.add_argument("--use-interactions", action="store_true")
+    parser.add_argument("--use-normalized-equipment", action="store_true")
+    parser.add_argument("--use-recent-weather", action="store_true")
+    parser.add_argument("--log-transform", type=str, default="", help="comma-separated feature names to log1p (create log_<col>)")
+    parser.add_argument("--winsorize-q", type=float, default=0.0, help="upper quantile for winsorize (e.g., 0.995)")
+    parser.add_argument("--winsorize-cols", type=str, default="", help="comma-separated feature names to winsorize")
+    parser.add_argument("--drop-raw-area", action="store_true", help="drop raw area columns (연면적/냉방면적)")
+    parser.add_argument("--calendar-minimal", action="store_true", help="drop day/day_of_year/week_of_year")
     args = parser.parse_args()
 
     # 내부 플래그 세팅(간단 전달)
     preprocess._drop_rainfall_flag = bool(args.drop_rainfall)
+    preprocess._use_cdh = bool(args.use_cdh)
+    preprocess._use_holiday_adj = bool(args.use_holiday_adj)
+    preprocess._use_interactions = bool(args.use_interactions)
+    preprocess._use_normalized_equipment = bool(args.use_normalized_equipment)
+    preprocess._use_recent_weather = bool(args.use_recent_weather)
+    preprocess._log_transform_list = [s.strip() for s in args.log_transform.split(',') if s.strip()]
+    preprocess._winsorize_q = float(args.winsorize_q) if args.winsorize_q else 0.0
+    preprocess._winsorize_cols = [s.strip() for s in args.winsorize_cols.split(',') if s.strip()]
+    preprocess._drop_raw_area = bool(args.drop_raw_area)
+    preprocess._calendar_minimal = bool(args.calendar_minimal)
     preprocess(args.train, args.test, args.info, args.out, drop_target_lags=not args.keep_target_lags)
 
 
