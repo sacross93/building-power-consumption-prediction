@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, ElasticNetCV
 
 import lightgbm as lgb
 import xgboost as xgb
@@ -284,24 +284,19 @@ def main(train_path: Path, test_path: Path, submission_path: Path):
         test_preds += fold_test_pred / n_splits
         gc.collect()
 
-    print("\n🔗 메타 모델 학습 (LinearRegression)...")
-    meta = LinearRegression()
-    meta.fit(oof_preds, y)
-    oof_meta = meta.predict(oof_preds)
-    score_meta_log = smape_np(y, oof_meta)
-    print(f"✅ Meta SMAPE (log-space): {score_meta_log:.3f}%")
+    print("\n🔗 메타 모델 학습 (ElasticNetCV, 원공간)...")
+    # 베이스 예측을 원공간으로 변환 후 메타 학습
+    oof_preds_linear = np.expm1(oof_preds)
+    y_linear = np.expm1(y)
+    meta = ElasticNetCV(l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9], alphas=None, cv=5, random_state=SEED, n_jobs=None)
+    meta.fit(oof_preds_linear, y_linear)
+    oof_meta_linear = meta.predict(oof_preds_linear)
+    score_meta_linear = smape_np(y_linear, oof_meta_linear)
+    print(f"✅ Meta SMAPE (linear-space): {score_meta_linear:.3f}%")
 
-    # 원공간 OOF SMAPE 함께 출력
-    try:
-        y_linear = np.expm1(y)
-        oof_meta_linear = np.expm1(oof_meta)
-        score_meta_linear = smape_np(y_linear, oof_meta_linear)
-        print(f"✅ Meta SMAPE (linear-space): {score_meta_linear:.3f}%")
-    except Exception as e:
-        print("⚠️ 원공간 OOF 계산 실패:", str(e))
-
-    test_meta = meta.predict(test_preds)
-    final_pred_kwh = np.expm1(test_meta)
+    # test 메타 예측(원공간)
+    test_preds_linear = np.expm1(test_preds)
+    final_pred_kwh = meta.predict(test_preds_linear)
 
     submission = pd.DataFrame({
         "num_date_time": test_df["num_date_time"],

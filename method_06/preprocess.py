@@ -113,7 +113,7 @@ def winsorize_per_building(df: pd.DataFrame, col: str, upper_q: float = 0.995) -
     return df.groupby("건물번호")[col].transform(_cap)
 
 
-def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: Path) -> None:
+def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: Path, drop_target_lags: bool = True) -> None:
     print("📥 데이터 로드 ...")
     train_df = pd.read_csv(train_path, parse_dates=["일시"], low_memory=False)
     test_df = pd.read_csv(test_path, parse_dates=["일시"], low_memory=False)
@@ -201,6 +201,12 @@ def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: P
         target_cols=[col for col in ["전력소비량(kWh)", "기온(°C)", "습도(%)"] if col in all_df.columns],
     )
 
+    # 옵션: 타깃 기반 랙/롤링 피처 제거 (테스트 구간 정보 공백으로 인한 일반화 저하 방지)
+    if drop_target_lags:
+        drop_cols = [c for c in all_df.columns if c.startswith("전력소비량(kWh)_lag_") or c.startswith("전력소비량(kWh)_roll_")]
+        if drop_cols:
+            all_df.drop(columns=drop_cols, inplace=True)
+
     # 통계 피처 (train으로 추정)
     print("통계 피처 계산 중 ...")
     train_stats = all_df.loc[mask_train].copy()
@@ -270,9 +276,10 @@ def main():
     parser.add_argument("--test", type=Path, default=Path("/home/wlsdud022/ds_test/data/test.csv"))
     parser.add_argument("--info", type=Path, default=Path("/home/wlsdud022/ds_test/data/building_info.csv"))
     parser.add_argument("--out", type=Path, default=Path("/home/wlsdud022/ds_test/method_06/cache"))
+    parser.add_argument("--keep-target-lags", action="store_true", help="전력소비량 타깃 기반 lag/rolling 피처를 유지합니다")
     args = parser.parse_args()
 
-    preprocess(args.train, args.test, args.info, args.out)
+    preprocess(args.train, args.test, args.info, args.out, drop_target_lags=not args.keep_target_lags)
 
 
 if __name__ == "__main__":
