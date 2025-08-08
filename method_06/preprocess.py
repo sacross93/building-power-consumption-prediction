@@ -65,13 +65,9 @@ def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
         df["풍속(m/s)"] = df["풍속(m/s)"].clip(lower=0)
     # 파생 (온도/습도/풍속만 사용)
     df["THI"] = 9 / 5 * df["기온(°C)"] - 0.55 * (1 - df["습도(%)"] / 100) * (9 / 5 * df["기온(°C)"] - 26) + 32
-    df["dew_point"] = df["기온(°C)"] - (100 - df["습도(%)"]) / 5
-    df["heat_index"] = 0.5 * (df["기온(°C)"] + 61.0 + (df["기온(°C)"] - 68.0) * 1.2 + df["습도(%)"] * 0.094)
     df["HDD"] = (18 - df["기온(°C)"]).clip(lower=0)
     df["CDD"] = (df["기온(°C)"] - 22).clip(lower=0)
-    df["WCT"] = (
-        13.12 + 0.6125 * df["기온(°C)"] - 11.37 * (df["풍속(m/s)"] ** 0.16) + 0.3965 * (df["풍속(m/s)"] ** 0.16) * df["기온(°C)"]
-    )
+    # 과민/중복 가능 파생은 제거: dew_point, heat_index, WCT 미생성
     return df
 
 

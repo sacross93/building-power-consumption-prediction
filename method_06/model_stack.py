@@ -12,6 +12,7 @@ import pandas as pd
 
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.linear_model import LinearRegression, ElasticNetCV
+from datetime import timedelta
 
 import lightgbm as lgb
 import xgboost as xgb
@@ -226,14 +227,13 @@ def main(train_path: Path, test_path: Path, submission_path: Path):
     else:
         print("⚠️ CPU 모드로 실행")
 
-    # 타깃 및 피처
-    if "log_power" in train_df.columns:
-        target_col = "log_power"
-    else:
-        raise ValueError("log_power가 필요합니다. 전처리를 먼저 실행하세요.")
+    # 타깃 및 피처 (원공간 kWh로 학습)
+    if "전력소비량(kWh)" not in train_df.columns:
+        raise ValueError("전력소비량(kWh) 컬럼이 필요합니다. 전처리를 먼저 실행하세요.")
+    target_col = "전력소비량(kWh)"
 
-    drop_cols = ["전력소비량(kWh)", "일시", "num_date_time"]
-    feature_cols = [c for c in train_df.columns if c not in drop_cols + [target_col]]
+    drop_cols = ["일시", "num_date_time", "log_power", target_col]
+    feature_cols = [c for c in train_df.columns if c not in drop_cols]
 
     # test에 num_date_time 보장
     if "num_date_time" not in test_df.columns:
@@ -285,18 +285,31 @@ def main(train_path: Path, test_path: Path, submission_path: Path):
         gc.collect()
 
     print("\n🔗 메타 모델 학습 (ElasticNetCV, 원공간)...")
-    # 베이스 예측을 원공간으로 변환 후 메타 학습
-    oof_preds_linear = np.expm1(oof_preds)
-    y_linear = np.expm1(y)
+    # 베이스 예측/타깃은 이미 원공간
+    oof_preds_linear = oof_preds
+    y_linear = y.to_numpy()
     meta = ElasticNetCV(l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9], alphas=None, cv=5, random_state=SEED, n_jobs=None)
     meta.fit(oof_preds_linear, y_linear)
     oof_meta_linear = meta.predict(oof_preds_linear)
     score_meta_linear = smape_np(y_linear, oof_meta_linear)
     print(f"✅ Meta SMAPE (linear-space): {score_meta_linear:.3f}%")
 
+    # 마지막 1주 홀드아웃(OOF 기반) SMAPE 추가
+    try:
+        if "일시" in train_df.columns:
+            cutoff = train_df["일시"].max() - timedelta(days=7)
+            holdout_mask = train_df["일시"] >= cutoff
+            y_hold = y_linear[holdout_mask]
+            oof_hold = oof_preds_linear[holdout_mask]
+            if len(y_hold) > 0:
+                pred_hold = meta.predict(oof_hold)
+                score_hold = smape_np(y_hold, pred_hold)
+                print(f"✅ Holdout(Last 7 days) SMAPE: {score_hold:.3f}%")
+    except Exception as e:
+        print("⚠️ Holdout SMAPE 계산 실패:", str(e))
+
     # test 메타 예측(원공간)
-    test_preds_linear = np.expm1(test_preds)
-    final_pred_kwh = meta.predict(test_preds_linear)
+    final_pred_kwh = meta.predict(test_preds)
 
     submission = pd.DataFrame({
         "num_date_time": test_df["num_date_time"],
