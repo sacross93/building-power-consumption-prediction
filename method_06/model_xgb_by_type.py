@@ -101,6 +101,7 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
             tree_method="hist",
             random_state=2025,
             eval_metric="mae",
+            verbosity=0,
         )
         # GPU 설정
         if gpus and len(gpus) > 0:
@@ -127,6 +128,7 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
                     y_tr,
                     eval_set=[(X_va, y_va)],
                     callbacks=cb,
+                    verbose=False,
                 )
             except TypeError:
                 # 콜백 미지원 버전: ES 없이 축소 n_estimators로 학습
@@ -135,6 +137,7 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
                     X_tr,
                     y_tr,
                     eval_set=[(X_va, y_va)],
+                    verbose=False,
                 )
 
             pred_va = model.predict(X_va)
