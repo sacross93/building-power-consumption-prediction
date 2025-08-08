@@ -244,6 +244,12 @@ def main(train_path: Path, test_path: Path, submission_path: Path):
         else:
             raise ValueError("test 데이터에 num_date_time 생성 불가")
 
+    # 전역 시간 정렬 보장 (시계열 분할 일관성)
+    if "일시" in train_df.columns:
+        train_df = train_df.sort_values(["일시"]).reset_index(drop=True)
+    if "일시" in test_df.columns:
+        test_df = test_df.sort_values(["일시"]).reset_index(drop=True)
+
     # 카테고리 열 자동 탐지
     categorical_cols = [c for c in feature_cols if str(train_df[c].dtype) == "category"]
     if "건물번호" in feature_cols and "건물번호" not in categorical_cols:
@@ -282,8 +288,17 @@ def main(train_path: Path, test_path: Path, submission_path: Path):
     meta = LinearRegression()
     meta.fit(oof_preds, y)
     oof_meta = meta.predict(oof_preds)
-    score_meta = smape_np(y, oof_meta)
-    print(f"✅ Meta SMAPE (log-space): {score_meta:.3f}%")
+    score_meta_log = smape_np(y, oof_meta)
+    print(f"✅ Meta SMAPE (log-space): {score_meta_log:.3f}%")
+
+    # 원공간 OOF SMAPE 함께 출력
+    try:
+        y_linear = np.expm1(y)
+        oof_meta_linear = np.expm1(oof_meta)
+        score_meta_linear = smape_np(y_linear, oof_meta_linear)
+        print(f"✅ Meta SMAPE (linear-space): {score_meta_linear:.3f}%")
+    except Exception as e:
+        print("⚠️ 원공간 OOF 계산 실패:", str(e))
 
     test_meta = meta.predict(test_preds)
     final_pred_kwh = np.expm1(test_meta)
@@ -292,6 +307,18 @@ def main(train_path: Path, test_path: Path, submission_path: Path):
         "num_date_time": test_df["num_date_time"],
         "answer": np.clip(final_pred_kwh, 0, None),
     })
+
+    # sample_submission 순서 강제 정렬 (집합 동일 + 순서 동일 보장)
+    try:
+        sample_path = Path(test_path).parents[1] / "data" / "sample_submission.csv"
+        if sample_path.exists():
+            sample = pd.read_csv(sample_path)
+            order = sample[["num_date_time"]].merge(submission, on="num_date_time", how="left")
+            if order["answer"].isna().any():
+                print("⚠️ sample_submission과 키 불일치 행 존재")
+            submission = order
+    except Exception as e:
+        print("⚠️ sample_submission 순서 정렬 실패:", str(e))
     submission.to_csv(submission_path, index=False)
     print(f"🎉 Submission saved to {submission_path}")
 

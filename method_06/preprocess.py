@@ -153,6 +153,40 @@ def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: P
     all_df = add_time_features(all_df)
     all_df = add_weather_features(all_df)
 
+    # 일조/일사 대체 피처: 테스트에는 없으므로 8월 시간대 평균으로 근사치 생성 후 원 컬럼 제거
+    try:
+        if "일조(hr)" in all_df.columns and "일사(MJ/m2)" in all_df.columns:
+            aug_mask = mask_train & (all_df["month"] == 8)
+            # 시간대 평균 계산 (훈련 8월 기준)
+            sunshine_hour_mean = (
+                all_df.loc[aug_mask].groupby("hour")["일조(hr)"].mean()
+                if aug_mask.any() else None
+            )
+            solar_hour_mean = (
+                all_df.loc[aug_mask].groupby("hour")["일사(MJ/m2)"].mean()
+                if aug_mask.any() else None
+            )
+            # 에스티메이터 컬럼 생성
+            all_df["sunshine_est"] = all_df["일조(hr)"]
+            all_df["solar_est"] = all_df["일사(MJ/m2)"]
+            # 테스트 구간 보강: 시간대 평균으로 채움, 남으면 전체 평균
+            if sunshine_hour_mean is not None:
+                all_df.loc[~mask_train, "sunshine_est"] = (
+                    all_df.loc[~mask_train, "hour"].map(sunshine_hour_mean)
+                )
+            if solar_hour_mean is not None:
+                all_df.loc[~mask_train, "solar_est"] = (
+                    all_df.loc[~mask_train, "hour"].map(solar_hour_mean)
+                )
+            # 전체 평균으로 최종 보강
+            all_df["sunshine_est"] = all_df["sunshine_est"].fillna(all_df["sunshine_est"].mean())
+            all_df["solar_est"] = all_df["solar_est"].fillna(all_df["solar_est"].mean())
+            # 원본 컬럼 제거 (테스트에 없어 불일치 방지)
+            all_df.drop(columns=["일조(hr)", "일사(MJ/m2)"], inplace=True)
+    except Exception:
+        # 문제 발생 시 조용히 패스하여 파이프라인 지속
+        pass
+
     # 결측 보강(보수적): 날씨 NaN은 건물×시간대 중앙값 → 전체 중앙값 순서로 대체
     for c in ["기온(°C)", "습도(%)", "풍속(m/s)", "강수량(mm)"]:
         if c in all_df.columns:
