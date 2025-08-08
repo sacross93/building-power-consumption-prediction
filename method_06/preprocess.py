@@ -196,6 +196,10 @@ def preprocess(train_path: Path, test_path: Path, info_path: Path, output_dir: P
         # 문제 발생 시 조용히 패스하여 파이프라인 지속
         pass
 
+    # 옵션: 강수 제거(노이즈 완화 실험용)
+    if getattr(preprocess, "_drop_rainfall_flag", False) and "강수량(mm)" in all_df.columns:
+        all_df.drop(columns=["강수량(mm)"], inplace=True)
+
     # 결측 보강(보수적): 날씨 NaN은 건물×시간대 중앙값 → 전체 중앙값 순서로 대체
     for c in ["기온(°C)", "습도(%)", "풍속(m/s)", "강수량(mm)"]:
         if c in all_df.columns:
@@ -296,8 +300,11 @@ def main():
     parser.add_argument("--info", type=Path, default=Path("/home/wlsdud022/ds_test/data/building_info.csv"))
     parser.add_argument("--out", type=Path, default=Path("/home/wlsdud022/ds_test/method_06/cache"))
     parser.add_argument("--keep-target-lags", action="store_true", help="전력소비량 타깃 기반 lag/rolling 피처를 유지합니다")
+    parser.add_argument("--drop-rainfall", action="store_true", help="강수량(mm) 피처를 제거합니다")
     args = parser.parse_args()
 
+    # 내부 플래그 세팅(간단 전달)
+    preprocess._drop_rainfall_flag = bool(args.drop_rainfall)
     preprocess(args.train, args.test, args.info, args.out, drop_target_lags=not args.keep_target_lags)
 
 
