@@ -74,9 +74,9 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
         te_t = pd.get_dummies(te_t, columns=[ohe_col])
         tr_t, te_t = tr_t.align(te_t, join="left", axis=1, fill_value=0)
 
-        # 피처 선택(공통 + OHE 확장 반영) – 비수치 컬럼 제거 및 타깃/시간/키 제외
+        # 피처 선택(공통 + OHE 확장 반영) – 비수치 제거 + 타깃/타깃변환/시간/키 제외
         num_cols = tr_t.select_dtypes(include=[np.number]).columns.tolist()
-        fcols = [c for c in num_cols if c != target]
+        fcols = [c for c in num_cols if c not in {target, "log_power"}]
         X = tr_t[fcols].to_numpy()
         y = tr_t[target].to_numpy()
         X_test = te_t[fcols].to_numpy()
@@ -178,7 +178,9 @@ def train_xgb_by_type(train_df: pd.DataFrame, test_df: pd.DataFrame, output_path
     sub.rename(columns={"pred": "answer"}, inplace=True)
 
     # sample 순서 강제
-    sample_path = Path(test_path).parents[1] / "data" / "sample_submission.csv"
+    # sample_submission 경로 해석: 기본은 프로젝트 루트(data/sample_submission.csv)
+    # cache 경로: .../project/method_06/cache/... → parents[2]가 프로젝트 루트
+    sample_path = Path(test_path).parents[2] / "data" / "sample_submission.csv"
     try:
         sample = pd.read_csv(sample_path)
         sub = sample[["num_date_time"]].merge(sub, on="num_date_time", how="left")
