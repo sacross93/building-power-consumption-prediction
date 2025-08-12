@@ -249,19 +249,46 @@ def run(
         # 대체 키가 없으면 None
         return None
 
+    # 학습 구간에서 베이스라인(건물×hour×weekday) 평균을 추정해 추후 병합에 사용
+    baseline_table: Optional[pd.DataFrame] = None
+    if {"건물번호", "hour", "weekday", target_col}.issubset(df.columns):
+        base_src = df.iloc[idx_train][["건물번호", "hour", "weekday", target_col]].copy()
+        baseline_table = (
+            base_src.groupby(["건물번호", "hour", "weekday"], as_index=False)[target_col]
+            .mean()
+            .rename(columns={target_col: "building_hour_weekday_mean"})
+        )
+
     def predict_for_df(model_g, model_types: Dict[str, object], df_any: pd.DataFrame) -> np.ndarray:
-        # test에 없는 컬럼을 자동 제외하고 공통 컬럼만 사용
-        features_any = intersect_features(features_train, df_any.select_dtypes(include=[np.number]).columns.tolist())
-        if not features_any:
-            raise ValueError("예측에 사용할 공통 숫자 피처가 없습니다. feature engineering 또는 입력을 확인하세요.")
-        X_any = df_any[features_any].copy()
+        # test에 없는 컬럼은 0으로 생성하여 학습 피처와 동일한 순서/개수로 맞춤
+        df_any_work = df_any.copy()
+        # 베이스라인 보강(가능 시)
+        if (baseline_table is not None) and ("building_hour_weekday_mean" in features_train) and (
+            "building_hour_weekday_mean" not in df_any_work.columns
+        ):
+            if {"건물번호", "hour", "weekday"}.issubset(df_any_work.columns):
+                df_any_work = df_any_work.merge(
+                    baseline_table, on=["건물번호", "hour", "weekday"], how="left"
+                )
+                if "building_hour_weekday_mean" in df_any_work.columns:
+                    df_any_work["building_hour_weekday_mean"] = pd.to_numeric(
+                        df_any_work["building_hour_weekday_mean"], errors="coerce"
+                    ).fillna(0.0)
+        # 누락 피처 생성(0 채움)
+        for c in features_train:
+            if c not in df_any_work.columns:
+                df_any_work[c] = 0.0
+        # 숫자형만 보장하고 순서 고정
+        X_any = pd.DataFrame(
+            {c: pd.to_numeric(df_any_work[c], errors="coerce").fillna(0.0) for c in features_train}
+        )[features_train]
         import xgboost as xgb
         dmat = xgb.DMatrix(X_any, feature_names=X_any.columns.tolist())
         y_log_pred_any_g = model_g.get_booster().predict(dmat)
         y_pred_any_g = inverse_and_clip(y_log_pred_any_g)
         y_pred_any_t = np.zeros_like(y_pred_any_g)
         if has_type and len(model_types) > 0:
-            types_any = df_any["건물유형"].astype(str) if "건물유형" in df_any.columns else pd.Series([""] * len(df_any))
+            types_any = df_any_work["건물유형"].astype(str) if "건물유형" in df_any_work.columns else pd.Series([""] * len(df_any_work))
             for t, m in model_types.items():
                 mask = (types_any == t).values
                 if not mask.any():
