@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 import numpy as np
 import pandas as pd
@@ -35,6 +35,15 @@ def build_features(df: pd.DataFrame, target_col: str) -> List[str]:
     # 상수 제거
     features = [c for c in features if df[c].nunique(dropna=True) > 1]
     return features
+def intersect_features(train_cols: List[str], test_cols: List[str]) -> List[str]:
+    """train/test 공통 숫자 컬럼만 사용하도록 교집합 생성.
+    누락/분포 불일치로 인한 예측 실패/경고를 예방.
+    """
+    s_train: Set[str] = set(train_cols)
+    s_test: Set[str] = set(test_cols)
+    common = list(s_train & s_test)
+    common.sort()
+    return common
 
 
 def train_xgb(
@@ -121,9 +130,9 @@ def run(
     y = pd.to_numeric(df[target_col], errors="coerce").fillna(0.0)
     y_log = np.log1p(y)
 
-    # 피처 선택
-    features = build_features(df, target_col=target_col)
-    X = df[features].copy()
+    # 피처 선택(학습 기준)
+    features_train = build_features(df, target_col=target_col)
+    X = df[features_train].copy()
 
     # 시간 순서 분할(80/20)
     order_key = choose_time_order(df)
@@ -197,7 +206,7 @@ def run(
     print(f"[METRIC] SMAPE Global: {smape_g:.3f}% | Type: {smape_t:.3f}% | Blended: {smape_b:.3f}%")
 
     # 저장물
-    (out_dir / "used_features.txt").write_text("\n".join(features), encoding="utf-8")
+    (out_dir / "used_features.txt").write_text("\n".join(features_train), encoding="utf-8")
     pd.DataFrame(
         {
             "y_true": y_true_valid,
@@ -211,7 +220,7 @@ def run(
     try:
         imp = getattr(global_model, "feature_importances_", None)
         if imp is not None:
-            pd.DataFrame({"feature": features, "importance": imp}).sort_values(
+            pd.DataFrame({"feature": features_train, "importance": imp}).sort_values(
                 "importance", ascending=False
             ).to_csv(out_dir / "global_feature_importance.csv", index=False, encoding="utf-8-sig")
     except Exception:
@@ -223,7 +232,7 @@ def run(
         f"SMAPE Type: {smape_t:.3f}%",
         f"SMAPE Blended: {smape_b:.3f}%",
         f"Rows: {len(df):,} | Train: {len(idx_train):,} | Valid: {len(idx_valid):,}",
-        f"Features: {len(features):,}",
+        f"Features: {len(features_train):,}",
         f"Alpha(type blend): {alpha_type_blend}",
         f"Gamma(guardrail): {gamma_guardrail}",
         f"Type models: {len(type_models)}",
@@ -241,7 +250,11 @@ def run(
         return None
 
     def predict_for_df(model_g, model_types: Dict[str, object], df_any: pd.DataFrame) -> np.ndarray:
-        X_any = df_any[features].copy()
+        # test에 없는 컬럼을 자동 제외하고 공통 컬럼만 사용
+        features_any = intersect_features(features_train, df_any.select_dtypes(include=[np.number]).columns.tolist())
+        if not features_any:
+            raise ValueError("예측에 사용할 공통 숫자 피처가 없습니다. feature engineering 또는 입력을 확인하세요.")
+        X_any = df_any[features_any].copy()
         import xgboost as xgb
         dmat = xgb.DMatrix(X_any, feature_names=X_any.columns.tolist())
         y_log_pred_any_g = model_g.get_booster().predict(dmat)
@@ -273,8 +286,8 @@ def run(
             # 우선순위: test_parquet가 있으면 그 데이터로 예측, 없으면 valid 구간으로 근사
             if test_parquet is not None and Path(test_parquet).exists():
                 df_test = pd.read_parquet(test_parquet)
-                # 피처 세트 정합성 확인
-                missing = [c for c in features if c not in df_test.columns]
+                # 피처 세트 정합성 확인(학습 기준)
+                missing = [c for c in features_train if c not in df_test.columns]
                 if missing:
                     print(f"[WARN] test에 누락 피처 존재: {missing[:5]}... {len(missing)}개")
                 y_pred_test = predict_for_df(global_model, type_models, df_test)

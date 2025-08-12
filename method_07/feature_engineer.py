@@ -226,7 +226,7 @@ def add_building_baseline(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def run(input_csv: Path, out_dir: Path, save_csv: bool = False) -> None:
+def run(input_csv: Path, out_dir: Path, save_csv: bool = False, output_name: str | None = None) -> None:
     print(f"[INFO] 입력: {input_csv}")
     print(f"[INFO] 출력 디렉토리: {out_dir}")
     make_dirs(out_dir)
@@ -240,8 +240,11 @@ def run(input_csv: Path, out_dir: Path, save_csv: bool = False) -> None:
     df = add_building_baseline(df)
 
     # 저장
-    parquet_path = out_dir / "train_engineered.parquet"
-    csv_path = out_dir / "train_engineered.csv"
+    # 출력 파일명 자동 결정: 타깃 존재 여부로 train/test 구분
+    has_target = "전력소비량(kWh)" in df.columns and not pd.isna(df["전력소비량(kWh)"].head(10)).all()
+    base_name = output_name or ("train_engineered" if has_target else "test_engineered")
+    parquet_path = out_dir / f"{base_name}.parquet"
+    csv_path = out_dir / f"{base_name}.csv"
     parquet_ok = True
     try:
         df.to_parquet(parquet_path, index=False)
