@@ -59,7 +59,6 @@ def train_xgb(
         reg_lambda=params.get("reg_lambda", 1.5),
         reg_alpha=params.get("reg_alpha", 0.0),
         tree_method=params.get("tree_method", "hist"),
-        predictor=params.get("predictor", None),
         device=params.get("device", None),
         random_state=params.get("random_state", 2025),
         n_jobs=params.get("n_jobs", 0),
@@ -104,6 +103,8 @@ def run(
     gamma_guardrail: float = 0.1,
     target_col: str = "전력소비량(kWh)",
     use_gpu: bool = False,
+    sample_submission: Optional[Path] = None,
+    test_parquet: Optional[Path] = None,
 ):
     print(f"[INFO] 입력: {input_parquet}")
     print(f"[INFO] 출력: {out_dir}")
@@ -139,10 +140,14 @@ def run(
     print("[INFO] 전역 모델 학습…")
     xgb_params: Dict = {}
     if use_gpu:
-        # XGBoost 2.x: device="cuda" 권장. 구버전 호환을 위해 gpu_hist/predictor도 함께 시도.
-        xgb_params.update({"device": "cuda", "tree_method": "gpu_hist", "predictor": "gpu_predictor"})
+        # XGBoost 2.x 권장 설정: device="cuda", tree_method="hist"
+        xgb_params.update({"device": "cuda", "tree_method": "hist"})
     global_model = train_xgb(X_train, y_train, X_valid, y_valid, params=xgb_params)
-    y_log_pred_g = global_model.predict(X_valid)
+
+    # 예측: DMatrix 경로 사용으로 device mismatch 경고 방지
+    import xgboost as xgb
+    dvalid = xgb.DMatrix(X_valid, feature_names=X_valid.columns.tolist())
+    y_log_pred_g = global_model.get_booster().predict(dvalid)
     y_pred_g = inverse_and_clip(y_log_pred_g)
 
     # 유형별 모델 학습(건물유형 컬럼 기반)
@@ -162,7 +167,9 @@ def run(
                 X_train[tr_mask], y_train[tr_mask], X_valid[va_mask], y_valid[va_mask], params=xgb_params
             )
             type_models[t] = m
-            y_log_pred_t = m.predict(X_valid[va_mask])
+            # 부분 검증셋도 DMatrix로 예측
+            dvalid_t = xgb.DMatrix(X_valid[va_mask], feature_names=X_valid.columns.tolist())
+            y_log_pred_t = m.get_booster().predict(dvalid_t)
             y_pred_t[va_mask] = inverse_and_clip(y_log_pred_t)
     else:
         print("[WARN] '건물유형' 컬럼이 없어 유형별 모델을 건너뜁니다.")
@@ -223,6 +230,83 @@ def run(
     ]
     (out_dir / "training_summary.txt").write_text("\n".join(summary), encoding="utf-8")
     print(f"[DONE] 저장: {out_dir}")
+
+    # ===== Optional: sample_submission 포맷으로 예측 파일 생성 =====
+    def ensure_num_date_time_key(frame: pd.DataFrame) -> Optional[pd.Series]:
+        if ("건물번호" in frame.columns) and ("일시" in frame.columns):
+            ts = pd.to_datetime(frame["일시"], errors="coerce")
+            key = frame["건물번호"].astype(str) + "_" + ts.dt.strftime("%Y%m%d %H")
+            return key
+        # 대체 키가 없으면 None
+        return None
+
+    def predict_for_df(model_g, model_types: Dict[str, object], df_any: pd.DataFrame) -> np.ndarray:
+        X_any = df_any[features].copy()
+        import xgboost as xgb
+        dmat = xgb.DMatrix(X_any, feature_names=X_any.columns.tolist())
+        y_log_pred_any_g = model_g.get_booster().predict(dmat)
+        y_pred_any_g = inverse_and_clip(y_log_pred_any_g)
+        y_pred_any_t = np.zeros_like(y_pred_any_g)
+        if has_type and len(model_types) > 0:
+            types_any = df_any["건물유형"].astype(str) if "건물유형" in df_any.columns else pd.Series([""] * len(df_any))
+            for t, m in model_types.items():
+                mask = (types_any == t).values
+                if not mask.any():
+                    continue
+                dmat_t = xgb.DMatrix(X_any[mask], feature_names=X_any.columns.tolist())
+                y_log_pred_any_t = m.get_booster().predict(dmat_t)
+                y_pred_any_t[mask] = inverse_and_clip(y_log_pred_any_t)
+            # fallback
+            fb = y_pred_any_t <= 0
+            y_pred_any_t[fb] = y_pred_any_g[fb]
+        else:
+            y_pred_any_t = y_pred_any_g.copy()
+        y_pred_any_blend = (1 - alpha_type_blend) * y_pred_any_g + alpha_type_blend * y_pred_any_t
+        if "building_hour_weekday_mean" in df_any.columns:
+            base_any = pd.to_numeric(df_any["building_hour_weekday_mean"], errors="coerce").fillna(0.0).values
+            y_pred_any_blend = (1 - gamma_guardrail) * y_pred_any_blend + gamma_guardrail * base_any
+        return y_pred_any_blend
+
+    if sample_submission is not None:
+        try:
+            ss = pd.read_csv(sample_submission, encoding="utf-8-sig")
+            # 우선순위: test_parquet가 있으면 그 데이터로 예측, 없으면 valid 구간으로 근사
+            if test_parquet is not None and Path(test_parquet).exists():
+                df_test = pd.read_parquet(test_parquet)
+                # 피처 세트 정합성 확인
+                missing = [c for c in features if c not in df_test.columns]
+                if missing:
+                    print(f"[WARN] test에 누락 피처 존재: {missing[:5]}... {len(missing)}개")
+                y_pred_test = predict_for_df(global_model, type_models, df_test)
+                key_test = ensure_num_date_time_key(df_test)
+                if key_test is not None and ss.columns[0] in ss.columns:
+                    sub = pd.DataFrame({ss.columns[0]: key_test, ss.columns[1]: y_pred_test})
+                else:
+                    # 키가 없으면 순서대로 채움
+                    sub = pd.DataFrame({ss.columns[1]: y_pred_test})
+                    sub.insert(0, ss.columns[0], range(len(sub)))
+            else:
+                # valid 구간으로 근사 생성
+                df_valid = df.iloc[idx_valid].copy()
+                y_pred_valid = y_pred_blend
+                key_valid = ensure_num_date_time_key(df_valid)
+                if key_valid is not None:
+                    sub = pd.DataFrame({ss.columns[0]: key_valid, ss.columns[1]: y_pred_valid})
+                else:
+                    sub = pd.DataFrame({ss.columns[1]: y_pred_valid})
+                    sub.insert(0, ss.columns[0], range(len(sub)))
+
+            # sample_submission의 순서로 정렬(가능하면)
+            if ss.columns[0] in sub.columns:
+                sub = ss[[ss.columns[0]]].merge(sub, on=ss.columns[0], how="left")
+                # 결측은 0으로 보수적 대체
+                sub[ss.columns[1]] = sub[ss.columns[1]].fillna(0.0)
+            # 저장
+            out_path = out_dir / "submission_like.csv"
+            sub.to_csv(out_path, index=False, encoding="utf-8-sig")
+            print(f"[DONE] 샘플 제출 포맷 저장: {out_path}")
+        except Exception as e:
+            print(f"[WARN] sample_submission 생성 실패: {e}")
 
 
 def parse_args() -> argparse.Namespace:

@@ -44,7 +44,8 @@
 
 7) 산출물
 - 학습 로그/지표(SMAPE), 중요도, 검증 예측 및 최종 예측 CSV
-- out/global_*.csv, out/type_*.csv, out/blended_*.csv
+  - out/global_*.csv, out/type_*.csv, out/blended_*.csv
+  - sample_submission 호환 파일: out/submission_like.csv (옵션 인자 제공 시)
 
 8) 향후 확장
 - 레짐/설비 분할 모델 추가 + 동적 게이팅, 스태킹 메타모델
