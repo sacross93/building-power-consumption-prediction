@@ -1,0 +1,53 @@
+모델 설계도 (전력소비량 예측 – XGBoost 중심)
+=
+
+1) 데이터/타깃/지표
+- 입력: method_07/cache/train_engineered.parquet (feature_engineer.py 산출)
+- 타깃: log_power = log1p(전력소비량(kWh))
+- 예측 후 역변환: expm1 → 0 하한 클리핑
+- 평가: SMAPE(%) – 원스케일에서 계산
+
+2) 피처 정책
+- 사용(핵심)
+  · 베이스라인: building_hour_weekday_mean, load_ratio, load_dev
+  · 냉방/온열: THI, CDD{18,22,24,26,28,30}, CDH26_{3,12,24}, 기온(°C), AH_gm3, HDD18(옵션)
+  · 제로-인플레: is_{일사/일조/강수/설비}_positive, {…}_log_pos(+99.5% 윈저)
+  · 설비/면적: *_utility, *_per_area, cooling_ratio
+  · 상호작용/주기: pv_utility_solar, solar_hour_{sin,cos}, hour_sin/cos, weekday_sin/cos, is_weekend
+  · 시간 원시(선택): hour
+- 제외(초기)
+  · 식별/누수: 일시, num_date_time, 건물번호, 전력소비량(kWh), log_power
+  · 제로-인플레 원시(대체 존재 시): 일사(MJ/m2), 일조(hr), 강수량(mm), 태양광용량(kW), ESS저장용량(kWh), PCS용량(kW)
+  · 주기 원시: month, weekday (→ sin/cos로 대체)
+  · 면적 원시: 연면적(m2), 냉방면적(m2) (→ 비율/정규화 우선; 초기엔 병행 후 가지치기)
+
+3) 모델 구조
+- 전역(Global) 모델: 전체 데이터로 1개 XGBoost
+- 건물유형별(Type) 모델: 건물유형별로 서브모델 학습(10개 내외)
+- (선택) 레짐별 모델: THI/CDD 기반 저·중·고, PV 보유/미보유, 주간/야간 등
+
+4) 앙상블/블렌딩
+- 기본: 전역(pred_g)과 유형(pred_t)을 가중 평균: pred = (1-α)*pred_g + α*pred_t (α≈0.5)
+- 가드레일: pred ← (1-γ)*pred + γ*building_hour_weekday_mean (γ≈0.1)
+- (선택) 레짐 게이팅: 레짐 지표로 α를 동적 조정(sigmoid 등)
+
+5) 분할/검증
+- 시간 순서 유지 분할(전방 80% 학습, 후방 20% 검증)
+- (보조) GroupKFold(건물번호)로 점검
+- 베이스라인 통계는 원칙상 각 폴드의 학습 구간으로 추정해야 하나, 본 버전은 feature_engineer 산출물을 사용(탐색 단계)
+
+6) 하이퍼파라미터(초기)
+- objective=reg:squarederror, eval_metric=mae
+- learning_rate=0.05, n_estimators=6000(ES 200), max_depth=8, min_child_weight=2~6
+- subsample=0.8, colsample_bytree=0.8, reg_lambda=1~3, reg_alpha=0~0.5
+- tree_method=hist(gpu_hist 가능)
+
+7) 산출물
+- 학습 로그/지표(SMAPE), 중요도, 검증 예측 및 최종 예측 CSV
+- out/global_*.csv, out/type_*.csv, out/blended_*.csv
+
+8) 향후 확장
+- 레짐/설비 분할 모델 추가 + 동적 게이팅, 스태킹 메타모델
+- SHAP 기반 가지치기로 중복/저효용 피처 정리
+
+
