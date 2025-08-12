@@ -328,6 +328,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gamma-guardrail", type=float, default=0.1, help="가드레일 베이스라인 가중")
     p.add_argument("--target-col", type=str, default="전력소비량(kWh)")
     p.add_argument("--use-gpu", action="store_true", help="가능하면 GPU(CUDA) 사용")
+    p.add_argument("--sample-submission", type=str, default=None, help="sample_submission.csv 경로")
+    p.add_argument("--test-parquet", type=str, default=None, help="테스트 parquet 경로(있으면 해당 데이터로 예측)")
     return p.parse_args()
 
 
@@ -341,6 +343,8 @@ if __name__ == "__main__":
         gamma_guardrail=args.gamma_guardrail,
         target_col=args.target_col,
         use_gpu=args.use_gpu,
+        sample_submission=Path(args.sample_submission) if args.sample_submission else None,
+        test_parquet=Path(args.test_parquet) if args.test_parquet else None,
     )
 
 
