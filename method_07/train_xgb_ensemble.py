@@ -132,7 +132,24 @@ def run(
 
     # 피처 선택(학습 기준)
     features_train = build_features(df, target_col=target_col)
-    X = df[features_train].copy()
+
+    # test_parquet가 주어진 경우, train/test 공통 숫자 피처만 사용(없는 변수는 제거)
+    features_used = features_train
+    df_test_for_schema: Optional[pd.DataFrame] = None
+    if test_parquet is not None and Path(test_parquet).exists():
+        try:
+            df_test_for_schema = pd.read_parquet(test_parquet)
+            test_num_cols = df_test_for_schema.select_dtypes(include=[np.number]).columns.tolist()
+            common = intersect_features(features_train, test_num_cols)
+            if common:
+                features_used = common
+                print(f"[INFO] train/test 공통 피처 수: {len(features_used)} (원래 {len(features_train)})")
+            else:
+                print("[WARN] 공통 피처가 없어 학습 피처 전체를 사용합니다.")
+        except Exception as e:
+            print(f"[WARN] test_parquet 스키마 확인 실패: {e}")
+
+    X = df[features_used].copy()
 
     # 시간 순서 분할(80/20)
     order_key = choose_time_order(df)
@@ -206,7 +223,7 @@ def run(
     print(f"[METRIC] SMAPE Global: {smape_g:.3f}% | Type: {smape_t:.3f}% | Blended: {smape_b:.3f}%")
 
     # 저장물
-    (out_dir / "used_features.txt").write_text("\n".join(features_train), encoding="utf-8")
+    (out_dir / "used_features.txt").write_text("\n".join(features_used), encoding="utf-8")
     pd.DataFrame(
         {
             "y_true": y_true_valid,
@@ -220,7 +237,7 @@ def run(
     try:
         imp = getattr(global_model, "feature_importances_", None)
         if imp is not None:
-            pd.DataFrame({"feature": features_train, "importance": imp}).sort_values(
+            pd.DataFrame({"feature": features_used, "importance": imp[: len(features_used)]}).sort_values(
                 "importance", ascending=False
             ).to_csv(out_dir / "global_feature_importance.csv", index=False, encoding="utf-8-sig")
     except Exception:
@@ -232,7 +249,7 @@ def run(
         f"SMAPE Type: {smape_t:.3f}%",
         f"SMAPE Blended: {smape_b:.3f}%",
         f"Rows: {len(df):,} | Train: {len(idx_train):,} | Valid: {len(idx_valid):,}",
-        f"Features: {len(features_train):,}",
+        f"Features: {len(features_used):,}",
         f"Alpha(type blend): {alpha_type_blend}",
         f"Gamma(guardrail): {gamma_guardrail}",
         f"Type models: {len(type_models)}",
@@ -260,9 +277,8 @@ def run(
         )
 
     def predict_for_df(model_g, model_types: Dict[str, object], df_any: pd.DataFrame) -> np.ndarray:
-        # test에 없는 컬럼은 0으로 생성하여 학습 피처와 동일한 순서/개수로 맞춤
-        df_any_work = df_any.copy()
         # 베이스라인 보강(가능 시)
+        df_any_work = df_any.copy()
         if (baseline_table is not None) and ("building_hour_weekday_mean" in features_train) and (
             "building_hour_weekday_mean" not in df_any_work.columns
         ):
@@ -274,14 +290,19 @@ def run(
                     df_any_work["building_hour_weekday_mean"] = pd.to_numeric(
                         df_any_work["building_hour_weekday_mean"], errors="coerce"
                     ).fillna(0.0)
-        # 누락 피처 생성(0 채움)
-        for c in features_train:
-            if c not in df_any_work.columns:
-                df_any_work[c] = 0.0
-        # 숫자형만 보장하고 순서 고정
+        # 학습에 사용한 공통 피처만 사용(존재하지 않는 피처는 사용하지 않음)
+        missing_now = [c for c in features_used if c not in df_any_work.columns]
+        if missing_now:
+            # 숫자형으로 존재하지 않는 경우 0으로 채우는 대신, 안전하게 해당 피처를 제외
+            present = [c for c in features_used if c in df_any_work.columns]
+            if not present:
+                raise ValueError("예측에 사용할 공통 피처가 없습니다.")
+            use_cols = present
+        else:
+            use_cols = features_used
         X_any = pd.DataFrame(
-            {c: pd.to_numeric(df_any_work[c], errors="coerce").fillna(0.0) for c in features_train}
-        )[features_train]
+            {c: pd.to_numeric(df_any_work[c], errors="coerce").fillna(0.0) for c in use_cols}
+        )[use_cols]
         import xgboost as xgb
         dmat = xgb.DMatrix(X_any, feature_names=X_any.columns.tolist())
         y_log_pred_any_g = model_g.get_booster().predict(dmat)
