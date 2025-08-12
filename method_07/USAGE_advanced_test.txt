@@ -1,0 +1,14 @@
+[GPU 서버 실행 가이드] advanced_test.csv 생성 절차 (uv 기반)
+
+0) (최초 1회) 의존성 설치 및 venv 활성화
+- source .venv/bin/activate
+- uv pip install -r method_07/requirements.txt
+
+1) test 병합 CSV 생성 (data/test.csv + data/building_info.csv → method_07/test_building_merged.csv)
+uv run python - <<PY
+import pandas as pd
+te = pd.read_csv(data/test.csv, encoding=utf-8-sig)
+bi = pd.read_csv(data/building_info.csv, encoding=utf-8-sig)
+df = te.merge(bi, on=건물번호, how=left)
+df.to_csv(method_07/test_building_merged.csv, index=False, encoding=utf-8-sig)
+print(saved
