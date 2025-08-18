@@ -178,7 +178,8 @@ def train_xgb_with_improvements(X_train, y_train, X_test, sample_weights=None,
     """개선된 XGBoost 학습"""
     
     from xgboost import XGBRegressor
-    
+    from sklearn.metrics import mean_squared_error
+
     print(f"\n🚀 개선된 XGBoost 학습 시작")
     print(f"   Train 크기: {len(X_train):,} × {len(X_train.columns)}")
     print(f"   Test 크기: {len(X_test):,} × {len(X_test.columns)}")
@@ -236,14 +237,28 @@ def train_xgb_with_improvements(X_train, y_train, X_test, sample_weights=None,
         
         # 모델 학습
         model = XGBRegressor(**xgb_params)
-        model.fit(
-            X_fold_train, y_fold_train,
-            sample_weight=fold_weights,
-            eval_set=[(X_fold_val, y_fold_val)],
-            early_stopping_rounds=200,
-            verbose=False
-        )
         
+        best_iteration = 0
+        best_score = np.inf
+        
+        for i in range(xgb_params['n_estimators']):
+            model.n_estimators = i + 1
+            model.fit(X_fold_train, y_fold_train, sample_weight=fold_weights)
+            
+            preds = model.predict(X_fold_val)
+            score = mean_squared_error(y_fold_val, preds)
+            
+            if score < best_score:
+                best_score = score
+                best_iteration = i
+            
+            if i - best_iteration >= 200:
+                print(f"      Early stopping at iteration {i+1}")
+                break
+        
+        model.n_estimators = best_iteration + 1
+        model.fit(X_fold_train, y_fold_train, sample_weight=fold_weights)
+
         # 검증 성능
         val_pred_log = model.predict(X_fold_val)
         val_pred = np.expm1(val_pred_log)
@@ -273,6 +288,7 @@ def train_xgb_with_improvements(X_train, y_train, X_test, sample_weights=None,
     print(f"   개별 폴드: {', '.join([f'{s:.3f}%' for s in cv_scores])}")
     
     return final_test_pred, cv_scores
+
 
 
 def apply_post_processing(predictions: np.ndarray, test_data: pd.DataFrame) -> np.ndarray:
