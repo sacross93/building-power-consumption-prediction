@@ -276,8 +276,14 @@ print({
 # 8) test_df에 일사/일조 예측 컬럼 추가
 test_df['일사(MJ/m2)'] = predict_for_df(model_irr, test_df)
 test_df['일조(hr)'] = predict_for_df(model_sun, test_df)
+# 저장용: 날짜 파생변수 컬럼도 test_df에 병합
+_test_fe = add_time_features(test_df)
+for _col in ['year', 'month', 'day', 'hour', 'dayofweek', 'quarter', 'is_weekend', 'season']:
+    if _col in _test_fe.columns and _col not in test_df.columns:
+        test_df[_col] = _test_fe[_col]
 print("test_df 예측 컬럼 추가 후 info:")
 print(test_df.info())
 
 # test_df 한글인코딩 저장
+train_df.to_csv('./data/train_filled.csv', index=False, encoding='cp949')
 test_df.to_csv('./data/test_filled.csv', index=False, encoding='cp949')
