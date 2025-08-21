@@ -16,11 +16,16 @@ import math
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# SMAPE 계산 함수
-def smape(y_true, y_pred, eps: float = 1e-6):
+# SMAPE 계산 함수 (옵션: 마스킹, 분모 하한)
+def smape(y_true, y_pred, eps: float = 1e-6, denom_floor: float | None = None, mask: np.ndarray | None = None):
     y_true = np.asarray(y_true)
     y_pred = np.asarray(y_pred)
+    if mask is not None:
+        y_true = y_true[mask]
+        y_pred = y_pred[mask]
     denom = (np.abs(y_true) + np.abs(y_pred) + eps)
+    if denom_floor is not None:
+        denom = np.maximum(denom, denom_floor)
     return 100.0 * np.mean(2.0 * np.abs(y_pred - y_true) / denom)
 
 # 한글 폰트 및 마이너스
@@ -149,16 +154,37 @@ def make_pipeline(num_cols, cat_cols, use_gpu: bool = False):
     return pipe
 
 # 4) 학습 및 평가
-def fit_and_eval(df_train_full: pd.DataFrame, target_col: str, test_size=0.2, random_state=42):
+def fit_and_eval(df_train_full: pd.DataFrame, target_col: str, test_size=0.2, random_state=42, split_mode: str = 'time'):
     # 두 타깃 모두 있는 행만 사용해 학습(사용자 의도 유지)
     train_df_nonnull = df_train_full.dropna(subset=['일사(MJ/m2)', '일조(hr)'])
 
     X, y, num_cols, cat_cols = build_feature_target(train_df_nonnull, target_col)
 
-    # (참고) 시간 누수 방지하려면 shuffle=False와 시간 기준 split로 변경 가능
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        X, y, test_size=test_size, random_state=random_state
-    )
+    # 시간 기반 분할(default): 과거 -> 학습, 미래 -> 검증
+    if split_mode == 'time':
+        if '일시' in df_train_nonnull.columns:
+            ts = pd.to_datetime(df_train_nonnull['일시'], errors='coerce')
+        else:
+            # 안전장치: 파생에서 만든 year/month/hour 등으로 대체 불가 시 랜덤 분할로 폴백
+            ts = pd.Series(np.arange(len(df_train_nonnull)), index=df_train_nonnull.index)
+        order = np.argsort(ts.values)
+        idx_sorted = df_train_nonnull.index.values[order]
+        split_point = int(len(idx_sorted) * (1.0 - test_size))
+        tr_idx = idx_sorted[:split_point]
+        te_idx = idx_sorted[split_point:]
+        X_tr, X_te = X.loc[tr_idx], X.loc[te_idx]
+        y_tr, y_te = y.loc[tr_idx], y.loc[te_idx]
+        val_times = ts.loc[te_idx]
+    else:
+        X_tr, X_te, y_tr, y_te = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
+        # 랜덤 분할 시에도 val_times 구성 가능하면 구성
+        if '일시' in df_train_nonnull.columns:
+            ts = pd.to_datetime(df_train_nonnull['일시'], errors='coerce')
+            val_times = ts.loc[y_te.index]
+        else:
+            val_times = pd.Series(index=y_te.index, dtype='datetime64[ns]')
 
     use_gpu = detect_gpu_available()
     print(f"GPU 사용 감지 결과: {use_gpu}")
@@ -178,9 +204,30 @@ def fit_and_eval(df_train_full: pd.DataFrame, target_col: str, test_size=0.2, ra
     # 구버전 scikit-learn 호환: squared 인자 미지원 환경 대응
     rmse = mean_squared_error(y_te, pred) ** 0.5
     r2 = r2_score(y_te, pred)
-    sm = smape(y_te, pred)
 
-    return pipe, {'rmse': rmse, 'r2': r2, 'smape': sm, 'n_train': len(X_tr), 'n_valid': len(X_te)}
+    # sMAPE: 기본, 주간만, 분모 하한
+    sm_standard = smape(y_te, pred)
+    # 주간(유효구간): 6~18시 기준
+    daytime_mask = None
+    try:
+        val_times_dt = pd.to_datetime(val_times, errors='coerce')
+        hours = val_times_dt.dt.hour
+        daytime_mask = (hours >= 6) & (hours <= 18)
+    except Exception:
+        daytime_mask = None
+    sm_daytime = smape(y_te, pred, mask=daytime_mask) if daytime_mask is not None else np.nan
+    # 분모 하한(폭주 방지): 1.0
+    sm_floor = smape(y_te, pred, denom_floor=1.0)
+
+    return pipe, {
+        'rmse': rmse,
+        'r2': r2,
+        'smape': sm_standard,
+        'smape_daytime': sm_daytime,
+        'smape_floor': sm_floor,
+        'n_train': len(X_tr),
+        'n_valid': len(X_te)
+    }
 
 # 5) 모델 학습
 model_irr, metrics_irr = fit_and_eval(train_df, target_col='일사(MJ/m2)')  # irradiance
@@ -231,3 +278,6 @@ test_df['일사(MJ/m2)'] = predict_for_df(model_irr, test_df)
 test_df['일조(hr)'] = predict_for_df(model_sun, test_df)
 print("test_df 예측 컬럼 추가 후 info:")
 print(test_df.info())
+
+# test_df 한글인코딩 저장
+test_df.to_csv('./data/test_filled.csv', index=False, encoding='cp949')
