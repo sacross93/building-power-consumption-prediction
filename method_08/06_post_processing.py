@@ -14,6 +14,10 @@ from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
 
+# matplotlib 한글폰트
+plt.rcParams['font.family'] = 'Malgun Gothic'
+plt.rcParams['axes.unicode_minus'] = False
+
 class PostProcessor:
     """예측값 후처리 파이프라인"""
     

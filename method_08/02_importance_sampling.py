@@ -16,6 +16,10 @@ from sklearn.model_selection import train_test_split
 import warnings
 warnings.filterwarnings('ignore')
 
+# matplotlib 한글폰트
+plt.rcParams['font.family'] = 'Malgun Gothic'
+plt.rcParams['axes.unicode_minus'] = False
+
 class ImportanceSampler:
     """Test 분포 기반 Train 샘플 리웨이팅"""
     

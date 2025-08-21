@@ -14,6 +14,10 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 warnings.filterwarnings('ignore')
 
+# matplotlib 한글폰트
+plt.rcParams['font.family'] = 'Malgun Gothic'
+plt.rcParams['axes.unicode_minus'] = False
+
 class TestAdaptiveFeatureEngineer:
     """Test 적응형 피처 엔지니어링"""
     

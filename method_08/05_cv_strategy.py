@@ -16,6 +16,10 @@ from sklearn.cluster import KMeans
 import warnings
 warnings.filterwarnings('ignore')
 
+# matplotlib 한글폰트
+plt.rcParams['font.family'] = 'Malgun Gothic'
+plt.rcParams['axes.unicode_minus'] = False
+
 class TestSimilarityCV(BaseCrossValidator):
     """Test 분포와 유사한 validation set을 생성하는 CV"""
     

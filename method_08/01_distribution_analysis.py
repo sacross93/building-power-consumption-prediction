@@ -14,6 +14,10 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
+# matplotlib 한글폰트
+plt.rcParams['font.family'] = 'Malgun Gothic'
+plt.rcParams['axes.unicode_minus'] = False
+
 def load_data(
     train_path: str = "../method_07/train_building_merged.csv",
     test_path: str = "../method_07/test_building_merged.csv"
