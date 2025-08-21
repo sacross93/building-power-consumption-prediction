@@ -284,6 +284,12 @@ for _col in ['year', 'month', 'day', 'hour', 'dayofweek', 'quarter', 'is_weekend
 print("test_df 예측 컬럼 추가 후 info:")
 print(test_df.info())
 
+# 저장용: 날짜 파생변수 컬럼도 train_df에 병합
+_train_fe = add_time_features(train_df)
+for _col in ['year', 'month', 'day', 'hour', 'dayofweek', 'quarter', 'is_weekend', 'season']:
+    if _col in _train_fe.columns and _col not in train_df.columns:
+        train_df[_col] = _train_fe[_col]
+
 # test_df 한글인코딩 저장
 train_df.to_csv('./data/train_filled.csv', index=False, encoding='cp949')
 test_df.to_csv('./data/test_filled.csv', index=False, encoding='cp949')
