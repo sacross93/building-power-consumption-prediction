@@ -175,7 +175,8 @@ def fit_and_eval(df_train_full: pd.DataFrame, target_col: str, test_size=0.2, ra
         pipe.fit(X_tr, y_tr)
 
     pred = pipe.predict(X_te)
-    rmse = mean_squared_error(y_te, pred, squared=False)
+    # 구버전 scikit-learn 호환: squared 인자 미지원 환경 대응
+    rmse = mean_squared_error(y_te, pred) ** 0.5
     r2 = r2_score(y_te, pred)
     sm = smape(y_te, pred)
 
