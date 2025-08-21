@@ -162,13 +162,13 @@ def fit_and_eval(df_train_full: pd.DataFrame, target_col: str, test_size=0.2, ra
 
     # 시간 기반 분할(default): 과거 -> 학습, 미래 -> 검증
     if split_mode == 'time':
-        if '일시' in df_train_nonnull.columns:
-            ts = pd.to_datetime(df_train_nonnull['일시'], errors='coerce')
+        if '일시' in train_df_nonnull.columns:
+            ts = pd.to_datetime(train_df_nonnull['일시'], errors='coerce')
         else:
             # 안전장치: 파생에서 만든 year/month/hour 등으로 대체 불가 시 랜덤 분할로 폴백
-            ts = pd.Series(np.arange(len(df_train_nonnull)), index=df_train_nonnull.index)
+            ts = pd.Series(np.arange(len(train_df_nonnull)), index=train_df_nonnull.index)
         order = np.argsort(ts.values)
-        idx_sorted = df_train_nonnull.index.values[order]
+        idx_sorted = train_df_nonnull.index.values[order]
         split_point = int(len(idx_sorted) * (1.0 - test_size))
         tr_idx = idx_sorted[:split_point]
         te_idx = idx_sorted[split_point:]
@@ -180,8 +180,8 @@ def fit_and_eval(df_train_full: pd.DataFrame, target_col: str, test_size=0.2, ra
             X, y, test_size=test_size, random_state=random_state
         )
         # 랜덤 분할 시에도 val_times 구성 가능하면 구성
-        if '일시' in df_train_nonnull.columns:
-            ts = pd.to_datetime(df_train_nonnull['일시'], errors='coerce')
+        if '일시' in train_df_nonnull.columns:
+            ts = pd.to_datetime(train_df_nonnull['일시'], errors='coerce')
             val_times = ts.loc[y_te.index]
         else:
             val_times = pd.Series(index=y_te.index, dtype='datetime64[ns]')
