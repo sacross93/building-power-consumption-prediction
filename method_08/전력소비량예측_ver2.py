@@ -27,17 +27,23 @@ def smape(y_true, y_pred, eps: float = 1e-6):
 plt.rcParams['font.family'] = 'Malgun Gothic'
 plt.rcParams['axes.unicode_minus'] = False
 
-# GPU 사용 가능 여부 점검
+# GPU 사용 가능 여부 점검 (XGBoost로 직접 확인)
 def detect_gpu_available() -> bool:
     try:
-        import cupy as cp  # noqa: F401
-        # 장치가 1개 이상인지 확인
-        try:
-            import cupy
-            return cupy.cuda.runtime.getDeviceCount() > 0
-        except Exception:
-            return True  # cupy는 있지만 장치 확인 실패 시 존재만으로 긍정 판단
-    except Exception:
+        X_small = np.random.rand(128, 8).astype(np.float32)
+        y_small = np.random.rand(128).astype(np.float32)
+        dtrain = xgb.DMatrix(X_small, label=y_small)
+        params = {
+            'tree_method': 'gpu_hist',
+            'predictor': 'gpu_predictor',
+            'max_depth': 2,
+            'nthread': 1,
+            'verbosity': 0,
+        }
+        xgb.train(params, dtrain, num_boost_round=1)
+        return True
+    except Exception as e:
+        print('GPU 사용 불가로 판단:', str(e))
         return False
 
 # 데이터 로드
@@ -155,11 +161,16 @@ def fit_and_eval(df_train_full: pd.DataFrame, target_col: str, test_size=0.2, ra
     )
 
     use_gpu = detect_gpu_available()
+    print(f"GPU 사용 감지 결과: {use_gpu}")
     pipe = make_pipeline(num_cols, cat_cols, use_gpu=use_gpu)
     try:
         pipe.fit(X_tr, y_tr)
     except xgb.core.XGBoostError as e:
         print('GPU 학습 시도 실패. CPU로 재시도합니다. reason=', str(e))
+        pipe = make_pipeline(num_cols, cat_cols, use_gpu=False)
+        pipe.fit(X_tr, y_tr)
+    except Exception as e:
+        print('GPU 학습 시도 중 예기치 못한 오류. CPU로 재시도합니다. reason=', str(e))
         pipe = make_pipeline(num_cols, cat_cols, use_gpu=False)
         pipe.fit(X_tr, y_tr)
 
